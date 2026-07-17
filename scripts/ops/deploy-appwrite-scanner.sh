@@ -25,7 +25,10 @@ mkdir -p "$HOME"
 # Build under the repository's committed pnpm lock, then upload only the
 # dependency-free JavaScript output. Appwrite never resolves npm packages.
 pnpm --filter @lemonize/artifact-scanner build
-deploy_dir=$(mktemp -d)
+# Appwrite CLI only packages deployment directories below the current working
+# directory. Keep the ephemeral payload inside the checkout and remove it on
+# every exit through the cleanup trap.
+deploy_dir=$(mktemp -d "$PWD/.appwrite-scanner-deploy.XXXXXX")
 cleanup_paths+=("$deploy_dir")
 mkdir -p "$deploy_dir/dist"
 cp apps/artifact-scanner/package.json "$deploy_dir/package.json"
@@ -53,9 +56,6 @@ fi
   --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
   --name "Lemonize artifact scanner" \
   --runtime node-25 \
-  --execute \
-  --events \
-  --schedule '' \
   --timeout 60 \
   --enabled true \
   --logging true \
@@ -89,7 +89,6 @@ upsert_variable() {
   local key=$2
   local value=$3
   local secret=$4
-  local command
   local existing_variable_id
   existing_variable_id=$(node -e '
     const fs = require("node:fs");
@@ -99,17 +98,22 @@ upsert_variable() {
     if (variable?.$id) process.stdout.write(variable.$id);
   ' "$variables_file" "$key")
   if [[ -n "$existing_variable_id" ]]; then
-    command=update-variable
-    variable_id=$existing_variable_id
+    # Appwrite does not permit changing a variable from secret to non-secret.
+    # Preserve the existing visibility on updates; new variables receive the
+    # checked-in desired visibility below.
+    "$APPWRITE_BIN" --json functions update-variable \
+      --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
+      --variable-id "$existing_variable_id" \
+      --key "$key" \
+      --value "$value" >/dev/null
   else
-    command=create-variable
+    "$APPWRITE_BIN" --json functions create-variable \
+      --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
+      --variable-id "$variable_id" \
+      --key "$key" \
+      --value "$value" \
+      --secret "$secret" >/dev/null
   fi
-  "$APPWRITE_BIN" --json functions "$command" \
-    --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
-    --variable-id "$variable_id" \
-    --key "$key" \
-    --value "$value" \
-    --secret "$secret" >/dev/null
 }
 
 upsert_variable registry_internal_url REGISTRY_INTERNAL_URL "$REGISTRY_BASE_URL" false

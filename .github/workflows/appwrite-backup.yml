@@ -44,8 +44,8 @@ jobs:
           APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
           APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
           APPWRITE_BACKUP_API_KEY: ${{ secrets.APPWRITE_BACKUP_API_KEY }}
-          APPWRITE_BACKUP_POLICY_ID: lemonize-12h
+          APPWRITE_BACKUP_POLICY_ID: lemonize-daily
           APPWRITE_BACKUP_RETENTION_DAYS: '7'
-          APPWRITE_BACKUP_SCHEDULE: '17 */12 * * *'
+          APPWRITE_BACKUP_SCHEDULE: '0 0 * * *'
           APPWRITE_CLI_HOME: ${{ runner.temp }}/appwrite-cli
         run: bash scripts/ops/appwrite-backup.sh "${{ inputs.operation }}"

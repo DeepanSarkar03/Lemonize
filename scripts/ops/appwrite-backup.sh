@@ -7,9 +7,9 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 bash "$script_dir/require-env.sh" APPWRITE_ENDPOINT APPWRITE_PROJECT_ID APPWRITE_BACKUP_API_KEY
 
 APPWRITE_BIN=${APPWRITE_BIN:-appwrite}
-APPWRITE_BACKUP_POLICY_ID=${APPWRITE_BACKUP_POLICY_ID:-lemonize-12h}
+APPWRITE_BACKUP_POLICY_ID=${APPWRITE_BACKUP_POLICY_ID:-lemonize-daily}
 APPWRITE_BACKUP_RETENTION_DAYS=${APPWRITE_BACKUP_RETENTION_DAYS:-7}
-APPWRITE_BACKUP_SCHEDULE=${APPWRITE_BACKUP_SCHEDULE:-17 */12 * * *}
+APPWRITE_BACKUP_SCHEDULE=${APPWRITE_BACKUP_SCHEDULE:-0 0 * * *}
 if [[ -z "${APPWRITE_CLI_HOME:-}" ]]; then
   APPWRITE_CLI_HOME=$(mktemp -d)
   trap 'rm -rf -- "$APPWRITE_CLI_HOME"' EXIT
@@ -42,7 +42,7 @@ case "$operation" in
       valid)
         "$APPWRITE_BIN" --json backups update-policy \
           --policy-id "$APPWRITE_BACKUP_POLICY_ID" \
-          --name "Lemonize 12-hour backup" \
+          --name "Lemonize daily backup" \
           --retention "$APPWRITE_BACKUP_RETENTION_DAYS" \
           --schedule "$APPWRITE_BACKUP_SCHEDULE" \
           --enabled true
@@ -53,7 +53,7 @@ case "$operation" in
           --services tablesdb functions storage \
           --retention "$APPWRITE_BACKUP_RETENTION_DAYS" \
           --schedule "$APPWRITE_BACKUP_SCHEDULE" \
-          --name "Lemonize 12-hour backup" \
+          --name "Lemonize daily backup" \
           --enabled true
         ;;
       *)
@@ -94,7 +94,7 @@ case "$operation" in
       const services = [...(latest.services ?? [])].sort();
       const age = Date.now() - Date.parse(latest.$createdAt);
       const size = Number(latest.size ?? latest.$size);
-      if (!Number.isFinite(age) || age < 0 || age > 13 * 60 * 60 * 1000 ||
+      if (!Number.isFinite(age) || age < 0 || age > 26 * 60 * 60 * 1000 ||
           !Number.isFinite(size) || size <= 0 ||
           JSON.stringify(services) !== JSON.stringify(expected)) {
         console.error("Newest completed Appwrite archive is stale, empty, or does not cover all required services");

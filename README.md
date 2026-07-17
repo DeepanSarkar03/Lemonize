@@ -135,17 +135,17 @@ Use separate dev, staging, and production Cloudflare, Appwrite, Clerk, and Verce
 
 ## Deployment status
 
-Staging and production have separate checked-in Appwrite definitions and protected environment configuration. The workflow validates the selected Appwrite project against those definitions; operators must still verify that Cloudflare, Clerk, and Vercel resource IDs do not overlap across environments. Production remains `REGISTRY_MODE=read_only` with `ALLOW_PUBLIC_PUBLISH=false` until migration reconciliation, authentication, scanner, backup/restore, and rollback checks are signed off.
+Staging is live at `https://lemonize-staging.vercel.app`; the staging native registry and npm proxy are live at `registry-staging.lemonize.cyou` and `npm-staging.lemonize.cyou`. Clean-cache npm, pnpm, and Yarn installs pass through the proxy. Staging and production use separate Vercel projects, Appwrite projects and keys, Cloudflare resources, and Clerk instances. The Appwrite schema and hardened scanner revision are deployed in both environments, daily seven-day backup policies are enabled, and the protected Node 24 CI release passed all required checks.
 
-The remaining external setup blockers are:
+Production remains `REGISTRY_MODE=read_only` with `ALLOW_PUBLIC_PUBLISH=false`. The remaining external setup and launch blockers are:
 
-- create/configure the absent production Clerk instance, finish its custom-issuer DNS, and verify the issuer/JWKS;
-- create and test the production GitHub OAuth client in Clerk, including its provider callback;
-- obtain narrow Cloudflare DNS/WAF authority missing from the current OAuth session, deploy and resolve `npm.lemonize.cyou`, then apply and test its WAF/rate-limit rules;
+- add the five pending Clerk DNS records in Cloudflare, finish SSL/mail verification, configure the production GitHub OAuth client, and verify the exact issuer/JWKS and browser flow;
+- sign in once as the owner and set the resulting immutable Clerk subject in `ADMIN_CLERK_IDS`, then test emergency security blocking;
+- obtain narrow Cloudflare DNS/WAF authority missing from the current OAuth session, create the pre-Worker abuse rules, deploy and resolve `npm.lemonize.cyou`, and record passing rate-limit tests;
+- create long-lived, least-privilege Cloudflare and project-scoped Vercel CI tokens. The current OAuth sessions can deploy interactively but cannot mint the required CI tokens;
 - authenticate an npm owner, create/verify the public `@lemonize` organization/package, and configure trusted publishing for `@lemonize/cli`;
 - create the production `CLI_R2_API_TOKEN`, scoped only to writing CLI release objects in the production R2 bucket. It belongs only to the protected `release-cli` job and must not be used by the Worker or general deployment workflow;
-- provision a CI-only Appwrite deploy key with `functions.write`, authenticate the currently signed-out CLI noninteractively, deploy the checked-in scanner revision, and pass clean/rejected scan integration tests;
-- finish the isolated GitHub staging/production environments, required checks, production reviewer gate, and `main` protection.
+- complete the GitHub-linked staging sign-in, terms, device approval, publish, clean/rejected scan, security-block, and restore drills. Initial Appwrite archives have been requested but are not considered verified until they complete and a non-production restore passes.
 
 Do not enable production writes to work around any of these blockers.
 
