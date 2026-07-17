@@ -1,0 +1,25 @@
+{
+  "name": "@lemonize/npm-proxy-worker",
+  "version": "0.1.0",
+  "description": "Read-only pull-through CDN for the public npm registry.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production",
+    "test": "vitest run",
+    "lint": "eslint src test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.6.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.5",
+    "@cloudflare/workers-types": "5.20260710.1",
+    "typescript": "^5.6.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.111.0"
+  }
+}

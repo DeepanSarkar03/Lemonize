@@ -1,0 +1,26 @@
+{
+  "name": "@lemonize/registry-worker",
+  "version": "0.1.0",
+  "description": "Lemonize registry API + CDN download gateway (Cloudflare Worker).",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lemonize/shared": "workspace:*",
+    "hono": "^4.6.3",
+    "jose": "6.2.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.5",
+    "@cloudflare/workers-types": "5.20260710.1",
+    "typescript": "^5.6.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.111.0"
+  }
+}

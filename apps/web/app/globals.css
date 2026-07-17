@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+
+:root {
+  color-scheme: light;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  body {
+    @apply bg-paper text-ink-900 antialiased;
+    background-image: radial-gradient(50rem 30rem at 15% -10%, rgba(232, 202, 46, 0.03), transparent 60%);
+    font-feature-settings: 'tnum' 1;
+  }
+
+  a,
+  button {
+    outline-offset: 3px;
+    touch-action: manipulation;
+  }
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible {
+    outline: 2px solid theme('colors.lemon.text');
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+@layer components {
+  .container-page {
+    @apply mx-auto max-w-content px-6;
+  }
+
+  .card {
+    @apply relative rounded-xl border border-line bg-surface p-6 shadow-none transition-[box-shadow,transform] duration-200 ease-out;
+  }
+
+  .card-hover {
+    @apply hover:-translate-y-0.5 hover:shadow-subtle;
+  }
+
+  .code {
+    @apply rounded-md border border-line bg-paper px-3 py-2 font-mono text-sm text-ink-900;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .btn {
+    @apply inline-flex min-h-[44px] items-center gap-2 rounded-md bg-ink-900 px-5 py-3 text-sm font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:bg-[#333333] active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply inline-flex min-h-[44px] items-center gap-2 rounded-md border border-line px-5 py-3 text-sm text-ink-900 transition-[border-color,background-color,transform] duration-150 ease-out hover:bg-paper active:scale-[0.98];
+  }
+
+  .btn-icon {
+    @apply flex h-6 w-6 items-center justify-center rounded-full bg-white/15 transition-transform duration-300 ease-spring group-hover:translate-x-0.5;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 rounded-full bg-lemon-bg px-3 py-1 text-[11px] font-medium uppercase tracking-[0.05em] text-lemon-text;
+  }
+
+  .input {
+    @apply w-full min-h-[44px] rounded-md border border-line bg-surface px-4 py-2.5 text-sm text-ink-900 outline-none transition-colors duration-150 ease-out placeholder:text-ink-600 focus:border-ink-900/40;
+  }
+
+  .usage-progress {
+    @apply block h-1.5 w-full appearance-none overflow-hidden rounded-full bg-paper;
+  }
+  .usage-progress::-webkit-progress-bar {
+    @apply rounded-full bg-paper;
+  }
+  .usage-progress::-webkit-progress-value {
+    @apply rounded-full bg-lemon-swatch;
+  }
+  .usage-progress::-moz-progress-bar {
+    @apply rounded-full bg-lemon-swatch;
+  }
+
+  .dashboard-skeleton {
+    background: linear-gradient(90deg, #ffffff 20%, #f2f0eb 50%, #ffffff 80%);
+    background-size: 200% 100%;
+    animation: dashboard-shimmer 1.4s ease-in-out infinite;
+  }
+
+  @keyframes dashboard-shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-medium text-ink-600;
+  }
+
+  .tag {
+    @apply inline-flex items-center rounded-full bg-lemon-bg px-2.5 py-0.5 font-mono text-[11px] font-medium tracking-wide text-lemon-text;
+  }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .animate-fade-up {
+    animation: fade-up 600ms var(--ease-out) both;
+  }
+
+  .stagger > * {
+    animation: fade-up 600ms var(--ease-out) both;
+  }
+  .stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger > *:nth-child(2) { animation-delay: 80ms; }
+  .stagger > *:nth-child(3) { animation-delay: 160ms; }
+  .stagger > *:nth-child(4) { animation-delay: 240ms; }
+  .stagger > *:nth-child(5) { animation-delay: 320ms; }
+  .stagger > *:nth-child(6) { animation-delay: 400ms; }
+
+  /* Expands the clickable area of small controls without growing them visually. */
+  .hit-slop {
+    position: relative;
+  }
+  .hit-slop::before {
+    content: '';
+    position: absolute;
+    inset: -8px;
+  }
+
+  .skip-link {
+    @apply rounded-md bg-ink-900 px-4 py-2 text-sm font-medium text-white;
+    position: absolute;
+    left: -9999px;
+    top: 1rem;
+    z-index: 100;
+  }
+  .skip-link:focus {
+    left: 1rem;
+  }
+}
+
+@tailwind utilities;
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .stagger > *,
+  .dashboard-skeleton {
+    animation: none;
+  }
+  .card-hover {
+    transition: border-color 150ms ease;
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "@lemonize/package-format",
+  "version": "0.1.0",
+  "description": "Manifest, tarball and integrity helpers for Lemonize packages (Node runtime).",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "test": "vitest run",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lemonize/shared": "workspace:*",
+    "tar": "^7.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.2",
+    "vitest": "4.1.10"
+  }
+}

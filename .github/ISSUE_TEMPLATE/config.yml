@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: mailto:security@lemonize.cyou
+    about: Privately report a vulnerability or exposed credential.
+  - name: Package abuse report
+    url: mailto:abuse@lemonize.cyou
+    about: Report malware, impersonation, or rights-infringing packages.

@@ -1,0 +1,1221 @@
+{
+    "organizationId": "68f7771639bb652918b8",
+    "projectId": "lemonize-staging-2026",
+    "projectName": "Lemonize Staging",
+    "settings": {
+        "services": {
+            "account": false,
+            "avatars": false,
+            "databases": false,
+            "locale": false,
+            "health": true,
+            "storage": true,
+            "teams": false,
+            "users": false,
+            "sites": false,
+            "functions": true,
+            "graphql": false,
+            "messaging": false
+        },
+        "protocols": {
+            "rest": true,
+            "graphql": true,
+            "websocket": true
+        },
+        "auth": {
+            "methods": {
+                "jwt": false,
+                "phone": false,
+                "invites": false,
+                "anonymous": false,
+                "email-otp": false,
+                "magic-url": false,
+                "email-password": false
+            },
+            "security": {
+                "duration": 31536000,
+                "limit": null,
+                "sessionsLimit": null,
+                "passwordHistory": null,
+                "passwordDictionary": false,
+                "personalDataCheck": false,
+                "sessionAlerts": false,
+                "mockNumbers": []
+            }
+        }
+    },
+    "tablesDB": [
+        {
+            "$id": "registry",
+            "name": "Lemonize Registry",
+            "enabled": true
+        }
+    ],
+    "tables": [
+        {
+            "$id": "users",
+            "$permissions": [],
+            "databaseId": "registry",
+            "name": "Users",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "clerkId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "email",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 320,
+                    "default": null,
+                    "encrypt": true
+                },
+                {
+                    "key": "githubUsername",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "githubId",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 128,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "namespace",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "namespaceClaimedAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                },
+                {
+                    "key": "status",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 16,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "role",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 16,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "storageBytes",
+                    "type": "integer",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "min": -9223372036854775808,
+                    "max": 9223372036854775807
+                },
+                {
+                    "key": "packageCount",
+                    "type": "integer",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "min": -9223372036854775808,
+                    "max": 9223372036854775807
+                },
+                {
+                    "key": "acceptedTermsAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                },
+                {
+                    "key": "acceptedTermsVersion",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 32,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "lastLoginAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "users_clerk_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "clerkId"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "users_namespace_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "namespace"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "users_github_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "githubId"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "users_status",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "status"
+                    ],
+                    "orders": []
+                }
+            ]
+        },
+        {
+            "$id": "api_tokens",
+            "$permissions": [],
+            "databaseId": "registry",
+            "name": "API Tokens",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "userId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "tokenHash",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "prefix",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 32,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "label",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 128,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "scopes",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 256,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "expiresAt",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                },
+                {
+                    "key": "lastUsedAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                },
+                {
+                    "key": "revokedAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "tokens_hash_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "tokenHash"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "tokens_user",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "userId"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "tokens_expiry",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "expiresAt"
+                    ],
+                    "orders": []
+                }
+            ]
+        },
+        {
+            "$id": "packages",
+            "$permissions": [],
+            "databaseId": "registry",
+            "name": "Packages",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "name",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 214,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "normalizedName",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 214,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "scope",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "ownerId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "description",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 2048,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "readme",
+                    "type": "longtext",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 16,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "latestVersion",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "storageBytes",
+                    "type": "integer",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "min": -9223372036854775808,
+                    "max": 9223372036854775807
+                },
+                {
+                    "key": "publishedVersionCount",
+                    "type": "integer",
+                    "required": false,
+                    "array": false,
+                    "default": 0,
+                    "min": 0,
+                    "max": 100
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "packages_name_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "normalizedName"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "packages_owner",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "ownerId"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "packages_scope",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "scope"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "packages_status",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "status"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "packages_search",
+                    "type": "fulltext",
+                    "status": "available",
+                    "columns": [
+                        "name",
+                        "description"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "packages_name_search",
+                    "type": "fulltext",
+                    "status": "available",
+                    "columns": [
+                        "name"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "packages_description_search",
+                    "type": "fulltext",
+                    "status": "available",
+                    "columns": [
+                        "description"
+                    ],
+                    "orders": []
+                }
+            ]
+        },
+        {
+            "$id": "versions",
+            "$permissions": [],
+            "databaseId": "registry",
+            "name": "Package Versions",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "packageId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 36,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "version",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 16,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "stagingKey",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 512,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "artifactKey",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 512,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "archiveFileId",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 36,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "integrity",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 256,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "shasum",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "computedShasum",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "tarballSize",
+                    "type": "integer",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "min": -9223372036854775808,
+                    "max": 9223372036854775807
+                },
+                {
+                    "key": "unpackedSize",
+                    "type": "integer",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "min": -9223372036854775808,
+                    "max": 9223372036854775807
+                },
+                {
+                    "key": "fileCount",
+                    "type": "integer",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "min": -9223372036854775808,
+                    "max": 9223372036854775807
+                },
+                {
+                    "key": "manifest",
+                    "type": "longtext",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "tag",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "publishedBy",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "scanError",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 1024,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "publishedAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                },
+                {
+                    "key": "yankedAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                },
+                {
+                    "key": "blockedAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                },
+                {
+                    "key": "deprecatedMessage",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 1024,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "blockReason",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 1024,
+                    "default": null,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "versions_pkg_ver_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "packageId",
+                        "version"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "versions_pkg_status",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "packageId",
+                        "status"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "versions_status",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "status"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "versions_shasum",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "shasum"
+                    ],
+                    "orders": []
+                }
+            ]
+        },
+        {
+            "$id": "dist_tags",
+            "$permissions": [],
+            "databaseId": "registry",
+            "name": "Distribution Tags",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "packageId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 36,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "tag",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "version",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "tags_pkg_tag_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "packageId",
+                        "tag"
+                    ],
+                    "orders": []
+                }
+            ]
+        },
+        {
+            "$id": "reservations",
+            "$permissions": [],
+            "databaseId": "registry",
+            "name": "Publish Reservations",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "packageId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 36,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "version",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "userId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "idempotencyKey",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "uploadTokenHash",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "stagingKey",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 512,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 16,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "expiresAt",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "reserve_pkg_ver_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "packageId",
+                        "version"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "reserve_idempotency_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "idempotencyKey"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "reserve_upload_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "uploadTokenHash"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "reserve_expiry",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "expiresAt"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "reserve_status",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "status"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "reserve_user",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "userId"
+                    ],
+                    "orders": []
+                }
+            ]
+        },
+        {
+            "$id": "reports",
+            "$permissions": [],
+            "databaseId": "registry",
+            "name": "Abuse Reports",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "reporterId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "packageId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 36,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "version",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "reason",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "detail",
+                    "type": "longtext",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 16,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "resolvedBy",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "resolvedAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "reports_status",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "status"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "reports_package",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "packageId"
+                    ],
+                    "orders": []
+                }
+            ]
+        },
+        {
+            "$id": "audit_log",
+            "$permissions": [],
+            "databaseId": "registry",
+            "name": "Audit Log",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "actorId",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "action",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "resourceType",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 32,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "resourceId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "detail",
+                    "type": "longtext",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "requestId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "ipHash",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 64,
+                    "default": null,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "audit_actor",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "actorId"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "audit_action",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "action"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "audit_resource",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "resourceId"
+                    ],
+                    "orders": []
+                }
+            ]
+        },
+        {
+            "$id": "scan_jobs",
+            "$permissions": [],
+            "databaseId": "registry",
+            "name": "Scan Jobs",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "versionId",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 36,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "varchar",
+                    "required": true,
+                    "array": false,
+                    "size": 16,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "attempts",
+                    "type": "integer",
+                    "required": true,
+                    "array": false,
+                    "default": null,
+                    "min": -9223372036854775808,
+                    "max": 9223372036854775807
+                },
+                {
+                    "key": "lastError",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 1024,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "nextAttemptAt",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "format": ""
+                },
+                {
+                    "key": "result",
+                    "type": "longtext",
+                    "required": false,
+                    "array": false,
+                    "default": null,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "scan_version_unique",
+                    "type": "unique",
+                    "status": "available",
+                    "columns": [
+                        "versionId"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "scan_status",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "status"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "scan_next",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "nextAttemptAt"
+                    ],
+                    "orders": []
+                }
+            ]
+        }
+    ],
+    "buckets": [
+        {
+            "$id": "quarantine",
+            "$permissions": [],
+            "fileSecurity": true,
+            "name": "Quarantine uploads",
+            "enabled": true,
+            "maximumFileSize": 20971520,
+            "allowedFileExtensions": [
+                "tgz"
+            ],
+            "compression": "none",
+            "encryption": true,
+            "antivirus": true
+        }
+    ]
+}

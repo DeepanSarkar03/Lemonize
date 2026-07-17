@@ -1,0 +1,51 @@
+name: Appwrite backup policy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Protected Appwrite environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      operation:
+        description: Reconcile the policy, verify it, or create an on-demand archive
+        required: true
+        type: choice
+        options:
+          - verify
+          - reconcile
+          - create
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appwrite-backup-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  backups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Install pinned Appwrite CLI
+        run: npm install --global appwrite-cli@22.6.1
+      - name: Reconcile or inspect backups
+        env:
+          APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
+          APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
+          APPWRITE_BACKUP_API_KEY: ${{ secrets.APPWRITE_BACKUP_API_KEY }}
+          APPWRITE_BACKUP_POLICY_ID: lemonize-12h
+          APPWRITE_BACKUP_RETENTION_DAYS: '7'
+          APPWRITE_BACKUP_SCHEDULE: '17 */12 * * *'
+          APPWRITE_CLI_HOME: ${{ runner.temp }}/appwrite-cli
+        run: bash scripts/ops/appwrite-backup.sh "${{ inputs.operation }}"

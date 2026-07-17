@@ -1,0 +1,4 @@
+# Local Worker secrets for `wrangler dev`. Copy to .dev.vars (gitignored).
+# No third-party secrets are strictly required for local dev of the MVP.
+# Add integrations here later, e.g.:
+# SENTRY_DSN="..."

@@ -1,0 +1,61 @@
+{
+  "connection_oauth_github": {
+    "enabled": true,
+    "authenticatable": true,
+    "block_email_subaddresses": true
+  },
+  "auth_access_control": {
+    "sign_up_mode": "public",
+    "allowlist_enabled": false,
+    "allowlist_blocklist_enforced_on_sign_in": false,
+    "block_disposable_email_domains": true,
+    "block_email_subaddresses": true
+  },
+  "auth_password": {
+    "enabled": false,
+    "required": false
+  },
+  "auth_email": {
+    "used_for_sign_in": true,
+    "used_for_sign_up": true,
+    "required_for_sign_up": true,
+    "verify_at_sign_up": true,
+    "sign_in_strategies": ["email_code"],
+    "verification_strategies": ["email_code"]
+  },
+  "auth_username": {
+    "used_for_sign_in": false,
+    "used_for_sign_up": false,
+    "required_for_sign_up": false,
+    "immutable": true
+  },
+  "auth_attack_protection": {
+    "bot_protection": {
+      "captcha_enabled": true,
+      "captcha_widget_type": "smart"
+    },
+    "enumeration_protection": "strict",
+    "pii_protection_enabled": true,
+    "user_lockout": {
+      "enabled": true,
+      "max_attempts": 10,
+      "duration_in_minutes": 60
+    }
+  },
+  "paths": {
+    "home": "/",
+    "sign_in": "/login",
+    "sign_up": "/login",
+    "after_sign_out_all": "/"
+  },
+  "compliance": {
+    "legal_consent": {
+      "enabled": true,
+      "privacy_policy_url": "https://lemonize.cyou/privacy",
+      "terms_of_service_url": "https://lemonize.cyou/terms"
+    }
+  },
+  "branding": {
+    "show_clerk_branding": true
+  }
+}

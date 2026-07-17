@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible Lemonize defect that is not security-sensitive.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include tokens, cookies, private package contents, or security vulnerabilities.
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      placeholder: web, registry, npm proxy, scanner, or CLI
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include sanitized commands, expected behavior, actual behavior, and any public request ID.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CLI/browser version
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials and personal data.
+          required: true

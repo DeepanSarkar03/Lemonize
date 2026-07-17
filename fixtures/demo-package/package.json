@@ -1,0 +1,12 @@
+{
+  "name": "@demo/utils",
+  "version": "1.0.0",
+  "description": "A tiny demo utility package for Lemonize.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": { "demo-hello": "./bin/cli.js" },
+  "files": ["dist", "bin", "README.md"],
+  "engines": { "node": ">=20" },
+  "lemonize": { "access": "public", "tag": "latest" }
+}

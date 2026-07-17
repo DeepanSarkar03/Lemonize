@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "globalEnv": [
+    "NEXT_PUBLIC_REGISTRY_URL",
+    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+    "CLERK_PUBLISHABLE_KEY",
+    "CLERK_SECRET_KEY"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "dev": { "cache": false, "persistent": true },
+    "test": { "dependsOn": ["^build"], "outputs": ["coverage/**"] },
+    "lint": {},
+    "typecheck": { "dependsOn": ["^build"] }
+  }
+}

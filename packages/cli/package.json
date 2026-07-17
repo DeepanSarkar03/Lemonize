@@ -1,0 +1,58 @@
+{
+  "name": "@lemonize/cli",
+  "version": "0.1.0",
+  "homepage": "https://lemonize.cyou/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeepanSarkar03/Lemonize.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/DeepanSarkar03/Lemonize/issues"
+  },
+  "keywords": [
+    "package-manager",
+    "registry",
+    "cdn",
+    "cli",
+    "lemonize"
+  ],
+  "description": "Lemonize CLI — publish, install and run packages with the `lem` command.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "lem": "./dist/lem.js",
+    "lemx": "./dist/lemx.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "build:bin": "node ../../scripts/build-cli-binary.mjs"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.0"
+  },
+  "devDependencies": {
+    "@lemonize/package-format": "workspace:*",
+    "@lemonize/shared": "workspace:*",
+    "@types/node": "^24.13.3",
+    "esbuild": "0.28.1",
+    "postject": "1.0.0-alpha.6",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.2",
+    "vitest": "4.1.10"
+  }
+}

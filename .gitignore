@@ -1,0 +1,43 @@
+node_modules/
+dist/
+.next/
+coverage/
+.turbo/
+*.log
+*.tsbuildinfo
+.DS_Store
+_tmp_*
+
+# Cloudflare / local dev
+.wrangler/
+.dev.vars
+wrangler.local.jsonc
+
+# Secrets & local config — never commit
+.env
+.env.local
+*.secret
+.lemonize/
+
+# Build fixtures
+*.tgz
+!fixtures/**/*.tgz
+
+# FUSE mount held-open temp files (never real deliverables)
+.fuse_hidden*
+
+# Compiled standalone CLI binaries (large; built in CI)
+dist-bin/
+.sea-build/
+
+.vercel
+.env*
+!.env.example
+.lemonize-backups/*
+!.lemonize-backups/.gitkeep
+.clerk-bootstrap-*.json
+
+# Local AI/tool settings may contain provider credentials.
+.agents/
+.claude/
+.uv-cache/

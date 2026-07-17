@@ -1,0 +1,86 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lemonize-npm-proxy",
+  "main": "src/index.ts",
+  "workers_dev": false,
+  "compatibility_date": "2026-07-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [
+      { "name": "NPM_ADMISSION_CONTROLLER", "class_name": "NpmAdmissionController" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-npm-origin-admission",
+      "new_sqlite_classes": ["NpmAdmissionController"]
+    }
+  ],
+  "vars": {
+    "NPM_PROXY_ENABLED": "false",
+    "NPM_PROXY_PUBLIC_ORIGIN": "https://npm.lemonize.cyou",
+    "NPM_PROXY_PACKUMENT_MODE": "free",
+    "NPM_ORIGIN_PER_IP_MINUTE": "1200",
+    "NPM_ORIGIN_GLOBAL_MINUTE": "1500",
+    "NPM_ORIGIN_GLOBAL_DAY": "10000",
+    "NPM_ORIGIN_METADATA_MINUTE": "800",
+    "NPM_ORIGIN_METADATA_DAY": "4500",
+    "NPM_ORIGIN_SEARCH_MINUTE": "15",
+    "NPM_ORIGIN_SEARCH_DAY": "250",
+    "NPM_ORIGIN_AUDIT_MINUTE": "10",
+    "NPM_ORIGIN_AUDIT_DAY": "250",
+    "NPM_ORIGIN_TARBALL_MINUTE": "800",
+    "NPM_ORIGIN_TARBALL_DAY": "5000"
+  },
+  "env": {
+    "staging": {
+      "vars": {
+        "NPM_PROXY_ENABLED": "true",
+        "NPM_PROXY_PUBLIC_ORIGIN": "https://npm-staging.lemonize.cyou",
+        "NPM_PROXY_PACKUMENT_MODE": "free",
+        "NPM_ORIGIN_PER_IP_MINUTE": "1200",
+        "NPM_ORIGIN_GLOBAL_MINUTE": "1500",
+        "NPM_ORIGIN_GLOBAL_DAY": "10000",
+        "NPM_ORIGIN_METADATA_MINUTE": "800",
+        "NPM_ORIGIN_METADATA_DAY": "4500",
+        "NPM_ORIGIN_SEARCH_MINUTE": "15",
+        "NPM_ORIGIN_SEARCH_DAY": "250",
+        "NPM_ORIGIN_AUDIT_MINUTE": "10",
+        "NPM_ORIGIN_AUDIT_DAY": "250",
+        "NPM_ORIGIN_TARBALL_MINUTE": "800",
+        "NPM_ORIGIN_TARBALL_DAY": "5000"
+      },
+      "durable_objects": {
+        "bindings": [
+          { "name": "NPM_ADMISSION_CONTROLLER", "class_name": "NpmAdmissionController" }
+        ]
+      },
+      "routes": [{ "pattern": "npm-staging.lemonize.cyou", "custom_domain": true }]
+    },
+    "production": {
+      "vars": {
+        "NPM_PROXY_ENABLED": "true",
+        "NPM_PROXY_PUBLIC_ORIGIN": "https://npm.lemonize.cyou",
+        "NPM_PROXY_PACKUMENT_MODE": "free",
+        "NPM_ORIGIN_PER_IP_MINUTE": "1200",
+        "NPM_ORIGIN_GLOBAL_MINUTE": "1500",
+        "NPM_ORIGIN_GLOBAL_DAY": "10000",
+        "NPM_ORIGIN_METADATA_MINUTE": "800",
+        "NPM_ORIGIN_METADATA_DAY": "4500",
+        "NPM_ORIGIN_SEARCH_MINUTE": "15",
+        "NPM_ORIGIN_SEARCH_DAY": "250",
+        "NPM_ORIGIN_AUDIT_MINUTE": "10",
+        "NPM_ORIGIN_AUDIT_DAY": "250",
+        "NPM_ORIGIN_TARBALL_MINUTE": "800",
+        "NPM_ORIGIN_TARBALL_DAY": "5000"
+      },
+      "durable_objects": {
+        "bindings": [
+          { "name": "NPM_ADMISSION_CONTROLLER", "class_name": "NpmAdmissionController" }
+        ]
+      },
+      "routes": [{ "pattern": "npm.lemonize.cyou", "custom_domain": true }]
+    }
+  }
+}

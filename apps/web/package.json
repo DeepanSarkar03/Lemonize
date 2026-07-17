@@ -1,0 +1,35 @@
+{
+  "name": "@lemonize/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "deploy": "next build",
+    "lint": "eslint app components lib",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^6.39.6",
+    "@lemonize/shared": "workspace:*",
+    "@phosphor-icons/react": "^2.1.10",
+    "geist": "^1.7.2",
+    "next": "16.2.10",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "8.5.19",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.2"
+  }
+}
