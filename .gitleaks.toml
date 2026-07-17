@@ -1,0 +1,27 @@
+title = "Lemonize secret scanning"
+
+[extend]
+useDefault = true
+
+# These are fixed, public test values. Keep the exception value-specific so a
+# real credential committed beside a fixture still fails the scan.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Known non-secret Clerk and HMAC test fixtures"
+  regexTarget = "secret"
+  regexes = [
+    '''^pk_test_Y2xlcmsuZXhhbXBsZS5jb20k$''',
+    '''^0123456789abcdef0123456789abcdef$''',
+    '''^test-signing-secret-with-at-least-32-bytes$''',
+  ]
+
+# This source file contains the literal markers that the artifact scanner must
+# detect. The exception applies only to the private-key rule and this one file.
+[[rules]]
+id = "private-key"
+
+  [[rules.allowlists]]
+  description = "Private-key detection signatures, not private-key material"
+  paths = ['''^apps/artifact-scanner/src/tar\.ts$''']

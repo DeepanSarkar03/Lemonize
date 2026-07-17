@@ -95,6 +95,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build workspace dependencies
+        run: pnpm --filter @lemonize/shared build
       - name: Bundle production Workers without deploying
         run: |
           pnpm --filter @lemonize/registry-worker exec wrangler deploy \
