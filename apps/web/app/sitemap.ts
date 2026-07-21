@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next';
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const updated = new Date('2026-07-21T00:00:00.000Z');
+  const updated = new Date();
   return ['/', '/docs', '/explore', '/terms', '/privacy'].map((path) => ({
     url: `https://lemonize.cyou${path}`,
     lastModified: updated,

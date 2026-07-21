@@ -42,7 +42,7 @@ const capabilities = [
   {
     icon: Package,
     label: 'A native registry too',
-    body: 'Publish your own immutable, content-addressed packages with the Lemonize CLI and a claimed namespace.',
+    body: 'Install immutable first-party packages today. Namespace-scoped publishing remains gated until the production write cutover.',
   },
 ];
 
@@ -191,13 +191,14 @@ export default function Landing() {
 
         <aside className="route-grid flex min-h-[28rem] flex-col justify-between overflow-hidden rounded-[2rem] bg-graphite p-7 text-pulp sm:p-9">
           <div>
-            <p className="technical-label text-citron">Native registry / publish</p>
+            <p className="technical-label text-citron">Native registry / read-only launch</p>
             <h2 className="mt-5 text-3xl font-medium tracking-[-0.05em]">
-              Your packages. Immutable by design.
+              First-party packages. Immutable by design.
             </h2>
             <p className="mt-5 text-sm leading-6 text-pulp/55">
-              Claim a namespace, publish with <code className="text-citron">lem</code>, and deliver
-              content-addressed artifacts from the Lemonize registry.
+              Browse and install content-addressed artifacts now. Publishing with{' '}
+              <code className="text-citron">lem</code> opens only after the separate production
+              write gate is approved.
             </p>
           </div>
           <div>
@@ -209,7 +210,7 @@ export default function Landing() {
               href="/docs"
               className="inline-flex items-center gap-2 text-sm font-medium text-citron hover:text-pulp"
             >
-              Read the publishing guide <ArrowRight size={15} weight="bold" />
+              Read the registry guide <ArrowRight size={15} weight="bold" />
             </Link>
           </div>
         </aside>

@@ -10,6 +10,7 @@
 @layer base {
   body {
     @apply bg-paper text-ink-900 antialiased;
+
     min-height: 100dvh;
     background-image:
       linear-gradient(var(--brand-grid) 1px, transparent 1px),

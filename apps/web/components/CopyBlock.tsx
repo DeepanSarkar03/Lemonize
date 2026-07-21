@@ -1,15 +1,27 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Copy, Check } from '@phosphor-icons/react/dist/ssr';
 
 export function CopyBlock({ text, label }: { text: string; label?: string }) {
   const [status, setStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    },
+    [],
+  );
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
       setStatus('copied');
-      setTimeout(() => setStatus('idle'), 1500);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => {
+        setStatus('idle');
+        resetTimer.current = null;
+      }, 1500);
     } catch {
       setStatus('error');
     }

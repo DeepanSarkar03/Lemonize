@@ -107,11 +107,12 @@ export default function Docs() {
         <section id="native-registry" className="scroll-mt-28 border-b border-line py-12">
           <p className="technical-label text-lemon-text">02 / native registry</p>
           <h2 className="mt-3 text-3xl font-semibold tracking-[-0.045em] text-ink-900">
-            Publish with Lemonize
+            Prepare a native package
           </h2>
           <p className="mt-5 max-w-2xl leading-7 text-ink-600">
-            Sign in to claim your publisher namespace, authorize the CLI, then publish an immutable
-            version from your project directory.
+            The workflow below applies after the write gate is enabled. Production is currently
+            read-only: existing packages remain installable, while new package and version writes
+            are rejected.
           </p>
 
           <ol className="mt-9 space-y-9 border-l border-line pl-6 sm:pl-8">
