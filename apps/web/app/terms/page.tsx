@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { LegalDocument, type LegalSection } from '@/components/LegalDocument';
 
 export const metadata: Metadata = {
-  title: 'Terms | Lemonize',
+  title: 'Terms',
   description: 'Terms governing access to and use of Lemonize.',
 };
 
@@ -11,7 +11,7 @@ const sections: LegalSection[] = [
     title: 'Using Lemonize',
     paragraphs: [
       'These terms govern your access to the Lemonize website, registry, command-line tools, and related services. By using Lemonize, you agree to these terms.',
-      'Lemonize is currently a demonstration package registry. Features may change, pause, or be removed as the service develops.',
+      'Lemonize is an independent package distribution service. Features may change, pause, or be removed as the service develops.',
     ],
   },
   {

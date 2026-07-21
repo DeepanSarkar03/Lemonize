@@ -4,13 +4,27 @@
 :root {
   color-scheme: light;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --brand-grid: rgba(16, 18, 15, 0.045);
 }
 
 @layer base {
   body {
     @apply bg-paper text-ink-900 antialiased;
-    background-image: radial-gradient(50rem 30rem at 15% -10%, rgba(232, 202, 46, 0.03), transparent 60%);
+    min-height: 100dvh;
+    background-image:
+      linear-gradient(var(--brand-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--brand-grid) 1px, transparent 1px),
+      radial-gradient(55rem 32rem at 12% -12%, rgba(215, 242, 90, 0.17), transparent 62%);
+    background-size:
+      48px 48px,
+      48px 48px,
+      auto;
     font-feature-settings: 'tnum' 1;
+  }
+
+  ::selection {
+    background: theme('colors.lemon.swatch');
+    color: theme('colors.carbon');
   }
 
   a,
@@ -20,10 +34,13 @@
   }
   a:focus-visible,
   button:focus-visible,
-  input:focus-visible {
-    outline: 2px solid theme('colors.lemon.text');
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid theme('colors.carbon');
     outline-offset: 2px;
     border-radius: 4px;
+    box-shadow: 0 0 0 4px theme('colors.citron');
   }
 
   @keyframes fade-up {
@@ -40,11 +57,11 @@
 
 @layer components {
   .container-page {
-    @apply mx-auto max-w-content px-6;
+    @apply mx-auto max-w-content px-4 sm:px-6;
   }
 
   .card {
-    @apply relative rounded-xl border border-line bg-surface p-6 shadow-none transition-[box-shadow,transform] duration-200 ease-out;
+    @apply relative rounded-2xl border border-line bg-surface p-6 shadow-none transition-[box-shadow,transform,border-color] duration-200 ease-out;
   }
 
   .card-hover {
@@ -57,11 +74,19 @@
   }
 
   .btn {
-    @apply inline-flex min-h-[44px] items-center gap-2 rounded-md bg-ink-900 px-5 py-3 text-sm font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:bg-[#333333] active:scale-[0.98];
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-ink-900 px-5 py-3 text-sm font-medium text-pulp transition-[background-color,transform] duration-150 ease-out hover:bg-graphite active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn;
+  }
+
+  .btn-acid {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-citron px-5 py-3 text-sm font-semibold text-carbon transition-[background-color,transform] duration-150 ease-out hover:bg-[#E4FA7B] active:scale-[0.98];
   }
 
   .btn-ghost {
-    @apply inline-flex min-h-[44px] items-center gap-2 rounded-md border border-line px-5 py-3 text-sm text-ink-900 transition-[border-color,background-color,transform] duration-150 ease-out hover:bg-paper active:scale-[0.98];
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-line px-5 py-3 text-sm text-ink-900 transition-[border-color,background-color,transform] duration-150 ease-out hover:border-ink-600/40 hover:bg-surface active:scale-[0.98];
   }
 
   .btn-icon {
@@ -69,7 +94,7 @@
   }
 
   .eyebrow {
-    @apply inline-flex items-center gap-2 rounded-full bg-lemon-bg px-3 py-1 text-[11px] font-medium uppercase tracking-[0.05em] text-lemon-text;
+    @apply inline-flex items-center gap-2 rounded-full border border-lemon-swatch/40 bg-lemon-bg px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-lemon-text;
   }
 
   .input {
@@ -96,8 +121,12 @@
   }
 
   @keyframes dashboard-shimmer {
-    from { background-position: 200% 0; }
-    to { background-position: -200% 0; }
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
   }
 
   .label {
@@ -105,7 +134,22 @@
   }
 
   .tag {
-    @apply inline-flex items-center rounded-full bg-lemon-bg px-2.5 py-0.5 font-mono text-[11px] font-medium tracking-wide text-lemon-text;
+    @apply inline-flex items-center rounded-full border border-lemon-swatch/35 bg-lemon-bg px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-lemon-text;
+  }
+
+  .display-title {
+    @apply font-sans font-medium tracking-[-0.055em] text-ink-900;
+  }
+
+  .route-grid {
+    background-image:
+      linear-gradient(rgba(243, 240, 230, 0.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(243, 240, 230, 0.07) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .technical-label {
+    @apply font-mono text-[11px] uppercase tracking-[0.14em];
   }
 
   .tnum {
@@ -119,12 +163,24 @@
   .stagger > * {
     animation: fade-up 600ms var(--ease-out) both;
   }
-  .stagger > *:nth-child(1) { animation-delay: 0ms; }
-  .stagger > *:nth-child(2) { animation-delay: 80ms; }
-  .stagger > *:nth-child(3) { animation-delay: 160ms; }
-  .stagger > *:nth-child(4) { animation-delay: 240ms; }
-  .stagger > *:nth-child(5) { animation-delay: 320ms; }
-  .stagger > *:nth-child(6) { animation-delay: 400ms; }
+  .stagger > *:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .stagger > *:nth-child(2) {
+    animation-delay: 80ms;
+  }
+  .stagger > *:nth-child(3) {
+    animation-delay: 160ms;
+  }
+  .stagger > *:nth-child(4) {
+    animation-delay: 240ms;
+  }
+  .stagger > *:nth-child(5) {
+    animation-delay: 320ms;
+  }
+  .stagger > *:nth-child(6) {
+    animation-delay: 400ms;
+  }
 
   /* Expands the clickable area of small controls without growing them visually. */
   .hit-slop {
@@ -153,7 +209,8 @@
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,
   .stagger > *,
-  .dashboard-skeleton {
+  .dashboard-skeleton,
+  .animate-pulse {
     animation: none;
   }
   .card-hover {

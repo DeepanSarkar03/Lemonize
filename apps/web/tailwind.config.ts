@@ -6,26 +6,31 @@ export default {
     extend: {
       colors: {
         // Warm monochrome canvas
-        paper: '#F7F6F3',
-        surface: '#FFFFFF',
-        line: '#EAEAEA',
+        paper: '#F3F0E6',
+        surface: '#FBF9F2',
+        line: '#D9DCCE',
         ink: {
-          900: '#111111',
-          600: '#5B5852',
+          900: '#10120F',
+          600: '#62675B',
         },
         // Brand — used sparingly, as the pale-yellow pastel accent only
         lemon: {
-          bg: '#FBF3DB',
-          text: '#956400',
-          swatch: '#E8CA2E',
+          bg: '#EAF4B5',
+          text: '#465800',
+          swatch: '#D7F25A',
         },
+        carbon: '#10120F',
+        graphite: '#171A15',
+        citron: '#D7F25A',
+        pulp: '#F3F0E6',
+        steel: '#969C8B',
         pastel: {
-          blueBg: '#E1F3FE',
-          blueText: '#1F6C9F',
-          greenBg: '#EDF3EC',
-          greenText: '#346538',
-          redBg: '#FDEBEC',
-          redText: '#9F2F2D',
+          blueBg: '#E2EEE8',
+          blueText: '#315F55',
+          greenBg: '#E6F0D9',
+          greenText: '#3C6335',
+          redBg: '#F5E3DD',
+          redText: '#934437',
         },
       },
       fontFamily: {
@@ -41,7 +46,7 @@ export default {
         spring: 'cubic-bezier(0.32, 0.72, 0, 1)',
       },
       boxShadow: {
-        subtle: '0 2px 8px rgba(17, 17, 17, 0.04)',
+        subtle: '0 14px 36px rgba(16, 18, 15, 0.07)',
         none: '0 0 0 rgba(0,0,0,0)',
       },
     },
