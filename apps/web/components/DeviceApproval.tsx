@@ -3,6 +3,9 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { SignIn, SignedIn, SignedOut, useAuth } from '@clerk/nextjs';
+import { Badge } from '@/components/tailgrids/core/badge';
+import { Button } from '@/components/tailgrids/core/button';
+import { Input } from '@/components/tailgrids/core/input';
 
 type ApprovalState = 'idle' | 'approving' | 'approved' | 'error';
 const DEVICE_CODE = /^LEMN-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
@@ -56,7 +59,9 @@ function ApprovalForm() {
         role="status"
         aria-live="polite"
       >
-        <p className="tag mb-4 w-fit">Device approved</p>
+        <Badge color="success" className="mb-4 w-fit">
+          Device approved
+        </Badge>
         <h2 className="display-title text-2xl">Return to your terminal</h2>
         <p className="mt-3 leading-relaxed text-ink-600">
           The CLI received a 30-day token for package access and credential management. You can
@@ -75,7 +80,9 @@ function ApprovalForm() {
       onSubmit={approve}
       aria-busy={state === 'approving'}
     >
-      <p className="tag mb-4 w-fit">CLI authorization</p>
+      <Badge color="primary" className="mb-4 w-fit">
+        CLI authorization
+      </Badge>
       <h2 className="display-title text-2xl">Confirm the terminal code</h2>
       <p className="mt-3 leading-relaxed text-ink-600">
         Enter the code displayed by <code>lem login</code>. Approve only a code you started on your
@@ -89,9 +96,9 @@ function ApprovalForm() {
       <label className="mt-6 block text-sm font-medium text-ink-900" htmlFor="device-code">
         Device code
       </label>
-      <input
+      <Input
         id="device-code"
-        className="input mt-2 font-mono uppercase tracking-wider"
+        className="mt-2 w-full font-mono uppercase tracking-wider"
         value={code}
         onChange={(event) => {
           setCode(event.target.value);
@@ -105,6 +112,7 @@ function ApprovalForm() {
         autoCapitalize="characters"
         spellCheck={false}
         maxLength={14}
+        state={state === 'error' ? 'error' : 'default'}
         aria-invalid={state === 'error'}
         aria-describedby={
           state === 'error' ? 'device-code-help device-code-error' : 'device-code-help'
@@ -116,9 +124,9 @@ function ApprovalForm() {
           {message}
         </p>
       ) : null}
-      <button className="btn-primary mt-6" type="submit" disabled={state === 'approving'}>
+      <Button className="mt-6" type="submit" disabled={state === 'approving'}>
         {state === 'approving' ? 'Approving…' : 'Approve this device'}
-      </button>
+      </Button>
     </form>
   );
 }

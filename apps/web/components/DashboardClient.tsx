@@ -17,6 +17,11 @@ import {
 } from '@phosphor-icons/react';
 import { CopyBlock } from '@/components/CopyBlock';
 import { registryRequest } from '@/lib/registry-browser';
+import { Badge } from '@/components/tailgrids/core/badge';
+import { Button } from '@/components/tailgrids/core/button';
+import { Input } from '@/components/tailgrids/core/input';
+import { Progress } from '@/components/tailgrids/core/progress';
+import { Skeleton } from '@/components/tailgrids/core/skeleton';
 
 type TokenScope = 'read' | 'publish' | 'manage:packages' | 'manage:tokens';
 
@@ -165,6 +170,8 @@ function UsageMeter({
   limit: number;
   display?: string;
 }) {
+  const percent = limit > 0 ? Math.min(100, Math.round((value / limit) * 100)) : 0;
+
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between gap-4 text-sm">
@@ -173,7 +180,7 @@ function UsageMeter({
           {display ?? `${value} / ${limit}`}
         </span>
       </div>
-      <progress className="usage-progress" value={Math.min(value, limit)} max={limit} />
+      <Progress progress={percent} className="max-w-none" />
     </div>
   );
 }
@@ -321,10 +328,10 @@ export function DashboardClient() {
   if (loadState === 'loading') {
     return (
       <div className="space-y-5" aria-busy="true" aria-label="Loading dashboard">
-        <div className="dashboard-skeleton h-36 rounded-2xl" />
+        <Skeleton className="h-36 rounded-2xl" />
         <div className="grid gap-5 lg:grid-cols-[1.35fr_0.65fr]">
-          <div className="dashboard-skeleton h-80 rounded-2xl" />
-          <div className="dashboard-skeleton h-80 rounded-2xl" />
+          <Skeleton className="h-80 rounded-2xl" />
+          <Skeleton className="h-80 rounded-2xl" />
         </div>
       </div>
     );
@@ -336,9 +343,9 @@ export function DashboardClient() {
         <WarningCircle className="mx-auto text-pastel-redText" size={28} weight="bold" />
         <h1 className="display-title mt-4 text-2xl">Dashboard unavailable</h1>
         <p className="mt-2 text-sm leading-6 text-ink-600">{message}</p>
-        <button className="btn mt-6" type="button" onClick={() => void loadDashboard()}>
+        <Button className="mt-6" type="button" onClick={() => void loadDashboard()}>
           <ArrowClockwise size={16} weight="bold" /> Try again
-        </button>
+        </Button>
       </section>
     );
   }
@@ -358,9 +365,9 @@ export function DashboardClient() {
               <h1 className="text-3xl font-medium tracking-[-0.05em] sm:text-4xl">
                 @{account.namespace}
               </h1>
-              <span className="rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-white/70">
+              <Badge color="gray" className="border-white/10 bg-white/10 text-white/70">
                 {account.role}
-              </span>
+              </Badge>
             </div>
             <p className="mt-3 max-w-xl text-sm leading-6 text-white/65">
               {account.githubUsername ? `GitHub @${account.githubUsername}` : account.email}
@@ -398,14 +405,14 @@ export function DashboardClient() {
               I have read and accept the current Terms of Use.
             </label>
           </div>
-          <button
-            className="btn justify-center"
+          <Button
+            className="justify-center"
             type="button"
             disabled={!acceptTermsChecked || busyToken !== null}
             onClick={() => void acceptTerms()}
           >
             {busyToken === 'terms' ? 'Saving…' : 'Accept terms'}
-          </button>
+          </Button>
         </section>
       ) : null}
 
@@ -555,9 +562,9 @@ export function DashboardClient() {
               <label className="label" htmlFor="token-label">
                 Label
               </label>
-              <input
+              <Input
                 id="token-label"
-                className="input"
+                className="w-full"
                 value={tokenLabel}
                 maxLength={128}
                 onChange={(event) => setTokenLabel(event.target.value)}
@@ -601,14 +608,10 @@ export function DashboardClient() {
                 ))}
               </div>
             </fieldset>
-            <button
-              className="btn w-full justify-center"
-              type="submit"
-              disabled={busyToken !== null}
-            >
+            <Button className="w-full justify-center" type="submit" disabled={busyToken !== null}>
               <Plus size={15} weight="bold" />
               {busyToken === 'create' ? 'Creating…' : 'Create token'}
-            </button>
+            </Button>
           </form>
 
           {snapshot.tokens.length > 0 ? (

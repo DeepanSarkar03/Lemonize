@@ -1,7 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowUpRight } from '@phosphor-icons/react/dist/ssr';
+import { ArrowUpRight, CheckCircle, HardDrives, Lightning } from '@phosphor-icons/react/dist/ssr';
 import { CopyBlock } from '@/components/CopyBlock';
+import { RegistryInstallTabs } from '@/components/RegistryInstallTabs';
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIndicator,
+  AlertTitle,
+} from '@/components/tailgrids/core/alert';
+import { Badge } from '@/components/tailgrids/core/badge';
 
 export const metadata: Metadata = {
   title: 'Documentation',
@@ -59,7 +68,12 @@ export default function Docs() {
 
       <article className="min-w-0 max-w-3xl">
         <header className="border-b border-ink-900/15 pb-10">
-          <p className="technical-label text-lemon-text">Docs / quickstart</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="technical-label text-lemon-text">Docs / quickstart</p>
+            <Badge color="success" prefixIcon={<CheckCircle weight="fill" />}>
+              Production
+            </Badge>
+          </div>
           <h1 className="display-title mt-4 text-5xl sm:text-6xl">Two ways to ship packages.</h1>
           <p className="mt-5 max-w-2xl text-lg leading-8 text-ink-600">
             Use the npm-compatible gateway for public packages, or the native registry for packages
@@ -86,8 +100,28 @@ export default function Docs() {
             Add the registry flag to one install. npm still resolves the public package; Lemonize
             provides the metadata and tarball route through Cloudflare.
           </p>
-          <div className="mt-7 space-y-3">
-            <CopyBlock text="npm install zod --registry=https://npm.lemonize.cyou" />
+          <div className="mt-7">
+            <RegistryInstallTabs />
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-line bg-surface p-4">
+              <Lightning size={18} weight="fill" className="text-lemon-text" />
+              <p className="mt-3 text-sm font-semibold text-ink-900">Edge hits stay close</p>
+              <p className="mt-1 text-xs leading-5 text-ink-600">
+                Cacheable responses are reused from Cloudflare&apos;s network after the first fetch.
+              </p>
+            </div>
+            <div className="rounded-xl border border-line bg-surface p-4">
+              <HardDrives size={18} weight="fill" className="text-lemon-text" />
+              <p className="mt-3 text-sm font-semibold text-ink-900">No package archive</p>
+              <p className="mt-1 text-xs leading-5 text-ink-600">
+                Public npm tarballs are streamed and cached, not copied into Lemonize R2 storage.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5">
             <CopyBlock text="npm install -g @lemonize/cli --registry=https://npm.lemonize.cyou" />
           </div>
 
@@ -114,6 +148,17 @@ export default function Docs() {
             read-only: existing packages remain installable, while new package and version writes
             are rejected.
           </p>
+
+          <Alert status="warning" className="mt-7 max-w-none">
+            <AlertIndicator />
+            <AlertContent>
+              <AlertTitle>Publishing is intentionally read-only</AlertTitle>
+              <AlertDescription>
+                Installs work in production. New native package and version writes remain locked
+                until the production write gate is enabled.
+              </AlertDescription>
+            </AlertContent>
+          </Alert>
 
           <ol className="mt-9 space-y-9 border-l border-line pl-6 sm:pl-8">
             {publishSteps.map((step, index) => (
