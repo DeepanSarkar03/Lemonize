@@ -80,7 +80,7 @@ For each environment:
 5. Configure and test GitHub OAuth. Public publisher eligibility requires Clerk to return a stable GitHub external ID; an account without GitHub remains a consumer.
 6. If administrators are needed, set `ADMIN_CLERK_IDS` to exact immutable Clerk subject IDs. Email addresses and GitHub usernames are not administrator identifiers.
 
-The production Clerk instance is not yet provisioned. Its future custom issuer `https://clerk.lemonize.cyou` must not be considered ready until the instance exists, Clerk's DNS setup is complete, and the issuer/JWKS resolve and verify from outside the operator's network.
+The production Clerk instance is provisioned behind `https://clerk.lemonize.cyou`; its custom domains, TLS/JWKS, mail DNS, and public GitHub OAuth configuration are present. Do not consider production authentication launch-ready until email delivery, first-user GitHub sign-in and callback handling, lockout, linking, legal consent, active-user lookup, and manual device approval pass end-to-end.
 
 ## 6. Configure local secrets
 

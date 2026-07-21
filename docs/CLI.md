@@ -38,7 +38,7 @@ The Worker verifies the Clerk session and active account before returning a 30-d
 
 `lem login --username <name>` remains as a client compatibility option, but the server ignores that value for identity. A username is never proof of authentication.
 
-The production Clerk instance, custom-domain DNS, and GitHub OAuth client are current cutover blockers. Authentication to a Clerk development instance does not make the production path ready. Use dedicated dev/staging Clerk and registry resources for login and publishing tests.
+The production Clerk instance, custom domains, TLS/JWKS, mail DNS, and public GitHub OAuth configuration are present. The production path remains a cutover blocker until email delivery, first-user GitHub sign-in and callback handling, lockout, linking, legal consent, active-user lookup, and manual device approval pass end-to-end. Use dedicated dev/staging Clerk and registry resources for write-capable tests.
 
 Device approval is stored for 120 seconds in a per-code Durable Object and consumed transactionally at most once. An expired, undelivered approval removes or revokes the corresponding token row so it cannot silently consume the account's active-token quota.
 

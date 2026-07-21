@@ -26,7 +26,7 @@ The flow is:
 
 The manual code entry is deliberate: putting the code in a first-party approval URL would let an attacker send a publisher a login-CSRF approval link.
 
-The production Clerk instance does not yet exist. Production setup is not complete until that instance, custom issuer DNS, and GitHub OAuth client are configured and exercised end-to-end. Production publishing remains read-only until all are complete.
+The production Clerk instance is provisioned behind `https://clerk.lemonize.cyou`. Custom frontend, accounts, mail, and DKIM DNS resolve; TLS and the RS256 JWKS are live; and Clerk's public environment reports GitHub OAuth enabled. Production authentication is not launch-proven until email delivery, first-user GitHub sign-in, callback handling, lockout, linking, legal consent, active-user lookup, and manual device approval are exercised end-to-end. Production publishing remains read-only until those drills and the remaining cutover gates are complete.
 
 ## Roles, namespaces, and scopes
 

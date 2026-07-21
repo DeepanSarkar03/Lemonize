@@ -139,7 +139,7 @@ Staging is live at `https://lemonize-staging.vercel.app`; the staging native reg
 
 Production remains `REGISTRY_MODE=read_only` with `ALLOW_PUBLIC_PUBLISH=false`. The remaining external setup and launch blockers are:
 
-- add the five pending Clerk DNS records in Cloudflare, finish SSL/mail verification, configure the production GitHub OAuth client, and verify the exact issuer/JWKS and browser flow;
+- exercise the provisioned production Clerk environment end-to-end: verify email delivery, first-user GitHub sign-in and callback handling, lockout, linking, legal consent, active-user lookup, and manual device approval;
 - sign in once as the owner and set the resulting immutable Clerk subject in `ADMIN_CLERK_IDS`, then test emergency security blocking;
 - obtain narrow Cloudflare DNS/WAF authority missing from the current OAuth session, create the pre-Worker abuse rules, deploy and resolve `npm.lemonize.cyou`, and record passing rate-limit tests;
 - create long-lived, least-privilege Cloudflare and project-scoped Vercel CI tokens. The current OAuth sessions can deploy interactively but cannot mint the required CI tokens;

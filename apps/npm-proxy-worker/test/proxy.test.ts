@@ -74,14 +74,18 @@ function createHarness(
     cache,
     upstreamFetch,
     admitOrigin,
-    async request(path: string, init: RequestInit = {}) {
+    async request(
+      path: string,
+      init: RequestInit = {},
+      publicOrigin = 'https://npm.lemonize.cyou',
+    ) {
       return handleProxyRequest(
         new Request(`https://npm.lemonize.cyou${path}`, init),
         dependencies,
         { waitUntil: (promise) => pending.push(promise) },
         true,
         'test-request-id',
-        'https://npm.lemonize.cyou',
+        publicOrigin,
         packumentMode,
       );
     },
@@ -296,6 +300,38 @@ describe('packument proxying', () => {
       tarball: 'https://npm.lemonize.cyou/chunked-large/-/chunked-large-1.0.0.tgz',
       integrity: 'sha512-preserved',
     });
+  });
+
+  it('errors when streaming URL rewrites expand beyond the packument byte limit', async () => {
+    const upstreamPrefix = 'https://registry.npmjs.org/';
+    const publicOrigin = `https://${Array.from({ length: 4 }, () => 'a'.repeat(60)).join('.')}.example`;
+    const replacementPrefix = `${publicOrigin}/`;
+    const expansionPerMatch = replacementPrefix.length - upstreamPrefix.length;
+    const occurrences = Math.ceil((MAX_PACKUMENT_BYTES + 1) / expansionPerMatch);
+    const body = JSON.stringify({
+      name: 'expanded',
+      description: upstreamPrefix.repeat(occurrences),
+      versions: {},
+    });
+    const bodyBytes = new TextEncoder().encode(body);
+    expect(bodyBytes.byteLength).toBeLessThan(MAX_PACKUMENT_BYTES);
+
+    const harness = createHarness(
+      () =>
+        new Response(bodyBytes, {
+          headers: {
+            'content-length': String(bodyBytes.byteLength),
+            'content-type': 'application/json',
+          },
+        }),
+      null,
+    );
+
+    const response = await harness.request('/expanded', {}, publicOrigin);
+    expect(response.headers.get('x-lemonize-packument-mode')).toBe('free-tier-streaming-rewrite');
+    await expect(response.text()).rejects.toThrow(
+      'Rewritten response exceeded the streaming size limit.',
+    );
   });
 });
 

@@ -345,9 +345,19 @@ function replaceUtf8Stream(
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
   const encoder = new TextEncoder();
   let pending = '';
-  let total = 0;
+  let upstreamBytes = 0;
+  let emittedBytes = 0;
 
   const replace = (value: string) => value.split(search).join(replacement);
+
+  const encodeLimited = (value: string): Uint8Array => {
+    const encoded = encoder.encode(value);
+    emittedBytes += encoded.byteLength;
+    if (emittedBytes > maximumBytes) {
+      throw new Error('Rewritten response exceeded the streaming size limit.');
+    }
+    return encoded;
+  };
 
   const replaceCompleteMatches = (value: string): string => {
     let cursor = 0;
@@ -375,14 +385,14 @@ function replaceUtf8Stream(
         const result = await readWithIdleTimeout(reader, idleTimeoutMilliseconds);
         if (result.done) {
           const output = replace(pending + decoder.decode());
-          if (output.length > 0) controller.enqueue(encoder.encode(output));
+          if (output.length > 0) controller.enqueue(encodeLimited(output));
           controller.close();
           reader.releaseLock();
           return;
         }
 
-        total += result.value.byteLength;
-        if (total > maximumBytes) {
+        upstreamBytes += result.value.byteLength;
+        if (upstreamBytes > maximumBytes) {
           await reader.cancel('upstream response exceeds proxy size limit').catch(() => undefined);
           controller.error(new Error('Upstream response exceeded the streaming size limit.'));
           return;
@@ -390,7 +400,7 @@ function replaceUtf8Stream(
 
         const decoded = pending + decoder.decode(result.value, { stream: true });
         const output = replaceCompleteMatches(decoded);
-        if (output.length > 0) controller.enqueue(encoder.encode(output));
+        if (output.length > 0) controller.enqueue(encodeLimited(output));
       } catch (error) {
         await reader.cancel('invalid upstream packument stream').catch(() => undefined);
         controller.error(error);
