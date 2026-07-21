@@ -1,15 +1,17 @@
 # Appwrite TablesDB backup and restore runbook
 
-Lemonize uses Appwrite CLI 22.6.1's native backup API. The `lemonize-12h` policy runs at `17 */12 * * *` UTC, backs up Appwrite `tablesdb`, `functions`, and `storage`, and retains archives for seven days. Appwrite executes the schedule; GitHub Actions is only the protected control plane for reconciling and inspecting it. No current runtime data is backed up from D1 because D1 is not a runtime store.
+Lemonize uses Appwrite CLI 22.6.1's native backup API. The `lemonize-daily` policy runs at `0 0 * * *` UTC, backs up Appwrite `tablesdb`, `functions`, and `storage`, and retains archives for seven days. This is the fixed daily schedule accepted by the current Appwrite plan; the provider rejected the former 12-hour schedule, so Lemonize did not upgrade the plan. Appwrite executes the schedule; GitHub Actions is only the protected control plane for reconciling and inspecting it. No current runtime data is backed up from D1 because D1 is not a runtime store.
+
+Backup mutation uses the reviewer-gated staging/production environments. Scheduled production health checks use a separate `production-monitoring` GitHub environment containing only `APPWRITE_ENDPOINT`, `APPWRITE_PROJECT_ID`, and an Appwrite key limited to `backups.policies.read` plus `archives.read`; it cannot create, delete, or restore a backup.
 
 Provider plans and backup availability change. The workflow fails visibly if the selected Appwrite project cannot use native backups; it never reports an export that did not happen. Confirm backup availability and storage charges before production use. If the provider rejects the policy on the current plan, treat production backup readiness as blocked rather than silently upgrading or relying only on checked-in resource definitions.
 
 ## Configure and verify
 
 1. Run `.github/workflows/appwrite-backup.yml` for `staging` with operation `reconcile`.
-2. After the first scheduled run, run `verify` and confirm the newest archive is `completed`, covers all three services, has a nonzero size where applicable, and is newer than 13 hours.
+2. After the first scheduled run, run `verify` and confirm the newest archive is `completed`, covers all three services, has a nonzero size where applicable, and is newer than 26 hours.
 3. Repeat for `production` after approval.
-4. Alert operationally if no completed production archive exists within 13 hours. The workflow does not create paid resources or change plans.
+4. Alert operationally if no completed production archive exists within 26 hours. The workflow does not create paid resources or change plans.
 
 `create` requests an additional on-demand archive before a risky maintenance window. Archive creation is asynchronous; run `verify` until its status becomes `completed`. `pending`, `processing`, and `uploading` are not restorable completion signals; investigate `failed` or `skipped`.
 

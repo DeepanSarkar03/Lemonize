@@ -18,13 +18,14 @@
     "lemonize"
   ],
   "description": "Lemonize CLI — publish, install and run packages with the `lem` command.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24"
   },
   "bin": {
-    "lem": "./dist/lem.js",
-    "lemx": "./dist/lemx.js"
+    "lem": "dist/lem.js",
+    "lemx": "dist/lemx.js"
   },
   "files": [
     "dist",

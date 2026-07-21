@@ -17,7 +17,8 @@ export function LegalDocument({ title, description, effectiveDate, sections }: L
   return (
     <article className="mx-auto max-w-3xl">
       <header className="space-y-4 border-b border-line pb-10">
-        <h1 className="font-serif text-4xl font-medium tracking-tight text-ink-900">{title}</h1>
+        <p className="technical-label text-lemon-text">Legal / Lemonize</p>
+        <h1 className="display-title text-4xl sm:text-5xl">{title}</h1>
         <p className="max-w-2xl text-lg leading-relaxed text-ink-600">{description}</p>
         <p className="font-mono text-xs text-ink-600">Effective {effectiveDate}</p>
       </header>

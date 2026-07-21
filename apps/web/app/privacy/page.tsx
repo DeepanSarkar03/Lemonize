@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { LegalDocument, type LegalSection } from '@/components/LegalDocument';
 
 export const metadata: Metadata = {
-  title: 'Privacy | Lemonize',
+  title: 'Privacy',
   description: 'How Lemonize handles account and service data.',
 };
 

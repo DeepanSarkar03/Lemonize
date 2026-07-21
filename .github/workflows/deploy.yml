@@ -107,6 +107,7 @@ jobs:
       - name: Install locked application and deployment CLIs
         run: |
           pnpm install --frozen-lockfile
+          pnpm --filter @lemonize/shared build
           npm install --global "appwrite-cli@$APPWRITE_CLI_VERSION"
           npm install --global "vercel@$VERCEL_CLI_VERSION"
 

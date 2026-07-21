@@ -310,7 +310,9 @@ export function DashboardClient() {
       });
       await loadDashboard();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'The terms acceptance could not be saved.');
+      setMessage(
+        error instanceof Error ? error.message : 'The terms acceptance could not be saved.',
+      );
     } finally {
       setBusyToken(null);
     }
@@ -332,7 +334,7 @@ export function DashboardClient() {
     return (
       <section className="mx-auto max-w-xl rounded-2xl bg-surface p-8 text-center">
         <WarningCircle className="mx-auto text-pastel-redText" size={28} weight="bold" />
-        <h1 className="mt-4 font-serif text-2xl font-medium">Dashboard unavailable</h1>
+        <h1 className="display-title mt-4 text-2xl">Dashboard unavailable</h1>
         <p className="mt-2 text-sm leading-6 text-ink-600">{message}</p>
         <button className="btn mt-6" type="button" onClick={() => void loadDashboard()}>
           <ArrowClockwise size={16} weight="bold" /> Try again
@@ -353,7 +355,7 @@ export function DashboardClient() {
               Publisher workspace
             </p>
             <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-2">
-              <h1 className="font-serif text-3xl font-medium tracking-tight sm:text-4xl">
+              <h1 className="text-3xl font-medium tracking-[-0.05em] sm:text-4xl">
                 @{account.namespace}
               </h1>
               <span className="rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-white/70">
@@ -377,7 +379,11 @@ export function DashboardClient() {
             <p className="font-semibold text-lemon-text">Review the current Terms of Use</p>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-lemon-text/80">
               Publishing stays locked until you explicitly accept version {terms.currentVersion}.{' '}
-              <Link className="font-medium underline underline-offset-4" href="/terms" target="_blank">
+              <Link
+                className="font-medium underline underline-offset-4"
+                href="/terms"
+                target="_blank"
+              >
                 Read the terms
               </Link>
               .
@@ -422,7 +428,10 @@ export function DashboardClient() {
       ) : null}
 
       {message ? (
-        <p className="rounded-lg bg-pastel-redBg px-4 py-3 text-sm text-pastel-redText" role="status">
+        <p
+          className="rounded-lg bg-pastel-redBg px-4 py-3 text-sm text-pastel-redText"
+          role="status"
+        >
           {message}
         </p>
       ) : null}
@@ -481,8 +490,12 @@ export function DashboardClient() {
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-3 text-xs">
-                        <span className="tnum font-mono text-ink-600">{bytes(pkg.storageBytes)}</span>
-                        <span className={`rounded-md px-2 py-1 font-mono text-[10px] ${statusTone(latestActivity?.status ?? pkg.status)}`}>
+                        <span className="tnum font-mono text-ink-600">
+                          {bytes(pkg.storageBytes)}
+                        </span>
+                        <span
+                          className={`rounded-md px-2 py-1 font-mono text-[10px] ${statusTone(latestActivity?.status ?? pkg.status)}`}
+                        >
                           {latestActivity?.status ?? pkg.status}
                         </span>
                       </div>
@@ -539,7 +552,9 @@ export function DashboardClient() {
 
           <form className="mt-5 space-y-4" onSubmit={createToken}>
             <div>
-              <label className="label" htmlFor="token-label">Label</label>
+              <label className="label" htmlFor="token-label">
+                Label
+              </label>
               <input
                 id="token-label"
                 className="input"
@@ -550,7 +565,9 @@ export function DashboardClient() {
               />
             </div>
             <div>
-              <label className="label" htmlFor="token-days">Expires</label>
+              <label className="label" htmlFor="token-days">
+                Expires
+              </label>
               <select
                 id="token-days"
                 className="input"
@@ -584,7 +601,11 @@ export function DashboardClient() {
                 ))}
               </div>
             </fieldset>
-            <button className="btn w-full justify-center" type="submit" disabled={busyToken !== null}>
+            <button
+              className="btn w-full justify-center"
+              type="submit"
+              disabled={busyToken !== null}
+            >
               <Plus size={15} weight="bold" />
               {busyToken === 'create' ? 'Creating…' : 'Create token'}
             </button>
@@ -619,9 +640,7 @@ export function DashboardClient() {
       <div className="grid items-start gap-6 lg:grid-cols-2">
         <section className="rounded-2xl bg-surface p-6">
           <h2 className="font-semibold text-ink-900">Usage and limits</h2>
-          <p className="mt-1 text-xs text-ink-600">
-            Starter allocation for @{account.namespace}
-          </p>
+          <p className="mt-1 text-xs text-ink-600">Starter allocation for @{account.namespace}</p>
           <div className="mt-6 space-y-5">
             <UsageMeter label="Packages" value={usage.packages} limit={limits.packages} />
             <UsageMeter
@@ -667,7 +686,10 @@ export function DashboardClient() {
                       {event.detail ?? event.resourceType}
                     </p>
                   </div>
-                  <time className="tnum font-mono text-[10px] text-ink-600" dateTime={event.createdAt}>
+                  <time
+                    className="tnum font-mono text-[10px] text-ink-600"
+                    dateTime={event.createdAt}
+                  >
                     {date(event.createdAt)}
                   </time>
                 </li>
@@ -689,7 +711,9 @@ export function DashboardClient() {
             </p>
           </div>
         </div>
-        <p className="tnum font-mono text-[10px] text-ink-600">Member since {date(account.createdAt)}</p>
+        <p className="tnum font-mono text-[10px] text-ink-600">
+          Member since {date(account.createdAt)}
+        </p>
       </section>
     </div>
   );

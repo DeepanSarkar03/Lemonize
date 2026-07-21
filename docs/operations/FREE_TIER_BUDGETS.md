@@ -34,11 +34,11 @@ Public-beta publisher defaults are five packages, twenty versions per package, t
 
 The npm proxy has no dedicated origin-storage bill because it uses only Cloudflare's Cache API; npmjs remains authoritative. That does not make it unbounded:
 
-- free mode buffers and rewrites successful packuments only through 256 KiB; larger packuments stream unchanged and may direct tarballs straight to npmjs;
+- free mode buffers and JSON-validates successful packuments through 256 KiB; larger packuments use bounded streaming replacement for exact official npm registry URL prefixes;
 - 16 MiB packuments, 100 MiB tarballs, 4 MiB search responses, 1 MiB audit requests, and 8 MiB audit responses are hard limits;
 - full tarballs can be cached; an origin Range miss is not stored as a partial object;
 - the `NPM_ADMISSION_CONTROLLER` Durable Object admits only cache misses and applies hashed per-IP, global minute/day, and route-specific budgets;
 - hostname-scoped Cloudflare WAF/rate rules must reject abusive traffic before Worker execution because Durable Object admission cannot save Worker request quota;
 - if either Worker or Durable Object allowance approaches 90%, set `NPM_PROXY_ENABLED=false` or withdraw the npm hostname before reducing native registry availability.
 
-Track `X-Lemonize-Cache` and `X-Lemonize-Packument-Mode` in synthetic samples without logging package-manager credentials or audit bodies. A high passthrough share is a reason to reassess the product promise, not permission to enable full rewriting without a cost/load test.
+Track `X-Lemonize-Cache` and `X-Lemonize-Packument-Mode` in synthetic samples without logging package-manager credentials or audit bodies. A high streaming-rewrite share is a reason to load-test the path, not permission to enable full-document buffering without a cost review.

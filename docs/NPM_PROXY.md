@@ -2,7 +2,7 @@
 
 Lemonize exposes a read-only pull-through proxy for the public npm registry at `https://npm.lemonize.cyou/`. npmjs remains authoritative. Lemonize uses Cloudflare's Cache API and does not store third-party npm packages in R2, KV, or Appwrite.
 
-The hostname is still a production cutover gate and does not currently resolve. The active Cloudflare OAuth session can deploy Workers but lacks DNS/WAF authority. Do not advertise the endpoint until an appropriately narrow credential has created/verified DNS and WAF configuration and the Worker custom domain, synthetic checks, and origin budgets pass.
+The production hostname is live and its Worker custom domain, Cache API path, origin budgets, npm/pnpm/Yarn installs, HEAD, and Range behavior have been verified. Hostname-scoped Cloudflare WAF/rate rules remain a production hardening gate because the available provider credential can edit DNS but not zone rulesets.
 
 ## Configure a client
 
@@ -37,15 +37,15 @@ The proxy deliberately implements a small allowlist needed for public installs:
 
 Login, logout, users, tokens, teams, stars, download statistics, replication/change feeds, package mutations, and every other npm endpoint are unsupported. Unknown read routes return `404`; mutations return `405`. This is a public download proxy, not an npm account or publishing service.
 
-## Free-mode packument caveat
+## Free-mode streaming rewrite
 
 Production uses `NPM_PROXY_PACKUMENT_MODE=free` to stay within free-tier Worker CPU and memory budgets.
 
 - Successful packuments with a declared size of at most 256 KiB are buffered, validated as JSON, and have official `registry.npmjs.org` tarball URLs rewritten to `npm.lemonize.cyou`.
-- Successful packuments larger than 256 KiB are streamed without JSON rewriting and carry `X-Lemonize-Packument-Mode: free-tier-passthrough`. Their `dist.tarball` URLs can therefore point directly to npmjs. The install still works, but that tarball does not traverse Lemonize's CDN.
+- Successful packuments larger than 256 KiB are bounded UTF-8 streams. Exact `https://registry.npmjs.org/` URL prefixes are rewritten as the bytes pass through, without retaining or parsing the complete document, and the response carries `X-Lemonize-Packument-Mode: free-tier-streaming-rewrite`.
 - Every packument has a hard 16 MiB limit. A declared oversize response fails with `502`; a stream that overruns its declaration is terminated.
 
-Do not promise that every npm tarball is delivered by Lemonize while free mode is enabled. `full` mode can rewrite larger packuments, but it must not be enabled until its Worker cost and failure behavior have been load-tested and approved.
+Official npmjs tarball URLs therefore stay on the Lemonize hostname in both free and full modes. URLs hosted somewhere other than the exact npm registry origin are deliberately left unchanged. `full` mode additionally buffers and validates larger JSON documents, but it must not be enabled until its Worker cost and failure behavior have been load-tested and approved.
 
 ## Cache, Range, and integrity behavior
 
@@ -60,7 +60,7 @@ Limits are 16 MiB per packument, 100 MiB per tarball, 4 MiB per search response,
 
 ## Origin admission and WAF
 
-Cache misses pass through a Durable Object admission controller before npmjs is contacted. The controller hashes the client IP, serializes a global ledger, and enforces per-IP, global minute/day, and route-specific metadata/search/audit/tarball origin budgets. A denied miss returns `429` with `Retry-After`; unavailable or corrupt admission state fails closed with `503`. Cache hits do not consume an origin-admission slot.
+Cache misses pass through a Durable Object admission controller before npmjs is contacted. The controller hashes the client IP, serializes a global ledger, and enforces per-IP, global minute/day, and route-specific metadata/search/audit/tarball origin budgets. The Worker rechecks the edge cache after admission so another request that completed the same fill can prevent a duplicate npm fetch. A denied miss returns `429` with `Retry-After`; unavailable or corrupt admission state fails closed with `503`. Initial cache hits do not consume an origin-admission slot.
 
 The checked-in starter budgets are intentionally conservative and may be lowered without changing the public API. They protect npmjs and free-tier origin traffic; they do not cap requests that terminate at the Worker or replace Cloudflare account-level usage monitoring.
 

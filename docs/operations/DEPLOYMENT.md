@@ -110,7 +110,7 @@ Appwrite, Cloudflare, and Vercel do not share a transaction. If a later phase fa
 
 Write enablement is a separate change with a separate approval. Complete the steps in this order:
 
-1. Create and configure the absent production Clerk instance, verify its custom-domain DNS/issuer/JWKS externally, and complete/test its GitHub OAuth callbacks and legal consent.
+1. Exercise the provisioned production Clerk environment end-to-end: verify email delivery, first-user GitHub sign-in and callback handling, lockout, linking, legal consent, active-user lookup, and manual device approval against the live custom issuer/JWKS.
 2. Put the legacy registry into an enforced read-only or firewall-denied write state. Prove token issuance and every legacy write route are rejected before exporting.
 3. Take the final legacy database export and source R2 inventory only after the freeze. Record source resource IDs, timestamps, object counts, sizes, and digests.
 4. Import into production Appwrite TablesDB and the intended production R2 bucket. Reconcile users, real Clerk bindings, ownership, packages, versions, tags, counters, visibility, audit rows, object keys, sizes, and digests immediately before cutover.

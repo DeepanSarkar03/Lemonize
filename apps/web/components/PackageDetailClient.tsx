@@ -62,9 +62,7 @@ export function PackageDetailClient({ name }: { name: string }) {
         <div className="space-y-8">
           <div>
             <div className="flex items-baseline gap-3">
-              <h1 className="font-serif text-3xl font-medium tracking-tight text-ink-900">
-                {pkg.name}
-              </h1>
+              <h1 className="display-title text-3xl">{pkg.name}</h1>
               <span className="tag tnum">{latest}</span>
             </div>
             {pkg.description ? (

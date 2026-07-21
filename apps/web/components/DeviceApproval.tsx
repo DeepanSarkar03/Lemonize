@@ -36,9 +36,9 @@ function ApprovalForm() {
         },
         body: JSON.stringify({ userCode: normalized }),
       });
-      const body = (await response.json().catch(() => null)) as
-        | { error?: { message?: string } }
-        | null;
+      const body = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
       if (!response.ok) {
         throw new Error(body?.error?.message || 'The device could not be approved.');
       }
@@ -51,9 +51,13 @@ function ApprovalForm() {
 
   if (state === 'approved') {
     return (
-      <div className="w-full max-w-md rounded-xl border border-line bg-white p-8">
+      <div
+        className="w-full max-w-md rounded-2xl border border-line bg-surface p-8"
+        role="status"
+        aria-live="polite"
+      >
         <p className="tag mb-4 w-fit">Device approved</p>
-        <h2 className="font-serif text-2xl font-medium text-ink-900">Return to your terminal</h2>
+        <h2 className="display-title text-2xl">Return to your terminal</h2>
         <p className="mt-3 leading-relaxed text-ink-600">
           The CLI received a 30-day token for package access and credential management. You can
           revoke it from the dashboard at any time.
@@ -66,14 +70,18 @@ function ApprovalForm() {
   }
 
   return (
-    <form className="w-full max-w-md rounded-xl border border-line bg-white p-8" onSubmit={approve}>
+    <form
+      className="w-full max-w-md rounded-2xl border border-line bg-surface p-8"
+      onSubmit={approve}
+      aria-busy={state === 'approving'}
+    >
       <p className="tag mb-4 w-fit">CLI authorization</p>
-      <h2 className="font-serif text-2xl font-medium text-ink-900">Confirm the terminal code</h2>
+      <h2 className="display-title text-2xl">Confirm the terminal code</h2>
       <p className="mt-3 leading-relaxed text-ink-600">
-        Enter the code displayed by <code>lem login</code>. Approve only a code you started on
-        your own device.
+        Enter the code displayed by <code>lem login</code>. Approve only a code you started on your
+        own device.
       </p>
-      <p className="mt-3 text-sm leading-relaxed text-ink-600">
+      <p id="device-code-help" className="mt-3 text-sm leading-relaxed text-ink-600">
         Approval grants the CLI a 30-day token. Publishers can read, publish, maintain their
         packages, and create, list, or revoke their account tokens. Consumers receive read and
         token-management access.
@@ -83,17 +91,31 @@ function ApprovalForm() {
       </label>
       <input
         id="device-code"
-        className="mt-2 w-full rounded-md border border-line bg-white px-3 py-2 font-mono uppercase tracking-wider text-ink-900 outline-none focus:border-ink-900"
+        className="input mt-2 font-mono uppercase tracking-wider"
         value={code}
-        onChange={(event) => setCode(event.target.value)}
+        onChange={(event) => {
+          setCode(event.target.value);
+          if (state === 'error') {
+            setState('idle');
+            setMessage('');
+          }
+        }}
         placeholder="LEMN-8F3K-M9QW"
         autoComplete="one-time-code"
         autoCapitalize="characters"
         spellCheck={false}
         maxLength={14}
+        aria-invalid={state === 'error'}
+        aria-describedby={
+          state === 'error' ? 'device-code-help device-code-error' : 'device-code-help'
+        }
         required
       />
-      {state === 'error' ? <p className="mt-3 text-sm text-red-700">{message}</p> : null}
+      {state === 'error' ? (
+        <p id="device-code-error" className="mt-3 text-sm text-pastel-redText" role="alert">
+          {message}
+        </p>
+      ) : null}
       <button className="btn-primary mt-6" type="submit" disabled={state === 'approving'}>
         {state === 'approving' ? 'Approving…' : 'Approve this device'}
       </button>
