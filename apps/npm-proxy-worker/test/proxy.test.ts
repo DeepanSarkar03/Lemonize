@@ -60,7 +60,9 @@ function createHarness(
 ) {
   const pending: Promise<unknown>[] = [];
   const upstreamFetch = vi.fn(async (request: Request) => fetchImplementation(request));
-  const admitOrigin = vi.fn(async (candidate: AdmissionCandidate) => admissionImplementation(candidate));
+  const admitOrigin = vi.fn(async (candidate: AdmissionCandidate) =>
+    admissionImplementation(candidate),
+  );
   const dependencies: ProxyDependencies = {
     fetch: upstreamFetch,
     getCache: () => cache,
@@ -152,7 +154,9 @@ describe('packument proxying', () => {
     await cachedCorgi.arrayBuffer();
     expect(harness.upstreamFetch).toHaveBeenCalledTimes(1);
 
-    const full = await harness.request('/@scope%2Fpkg', { headers: { accept: 'application/json' } });
+    const full = await harness.request('/@scope%2Fpkg', {
+      headers: { accept: 'application/json' },
+    });
     expect(full.headers.get('x-lemonize-cache')).toBe('MISS');
     expect(full.headers.get('content-type')).toContain('application/json');
     await full.arrayBuffer();
@@ -197,22 +201,22 @@ describe('packument proxying', () => {
   });
 
   it('rejects oversized and invalid upstream packuments', async () => {
-    const oversized = createHarness(() =>
-      new Response('{}', { headers: { 'content-length': String(MAX_PACKUMENT_BYTES + 1) } }),
+    const oversized = createHarness(
+      () => new Response('{}', { headers: { 'content-length': String(MAX_PACKUMENT_BYTES + 1) } }),
     );
     const tooLarge = await oversized.request('/huge');
     expect(tooLarge.status).toBe(502);
     expect(await tooLarge.json()).toMatchObject({ code: 'PACKUMENT_TOO_LARGE' });
 
-    const invalid = createHarness(() =>
-      new Response('{not-json', { headers: { 'content-type': 'application/json' } }),
+    const invalid = createHarness(
+      () => new Response('{not-json', { headers: { 'content-type': 'application/json' } }),
     );
     const malformed = await invalid.request('/broken');
     expect(malformed.status).toBe(502);
     expect(await malformed.json()).toMatchObject({ code: 'INVALID_PACKUMENT' });
   });
 
-  it('passes large packuments through on the free tier and fully rewrites them in full mode', async () => {
+  it('stream-rewrites large packuments on the free tier and fully rewrites them in full mode', async () => {
     const packument = {
       name: 'large',
       description: 'x'.repeat(300_000),
@@ -227,11 +231,13 @@ describe('packument proxying', () => {
     const free = createHarness(createLargeResponse);
     const freeResponse = await free.request('/large');
     expect(freeResponse.headers.get('x-lemonize-packument-mode')).toBe(
-      'free-tier-passthrough',
+      'free-tier-streaming-rewrite',
     );
+    expect(freeResponse.headers.get('content-length')).toBeNull();
+    expect(freeResponse.headers.get('etag')).toBeNull();
     const freeBody = (await freeResponse.json()) as typeof packument;
     expect(freeBody.versions['1.0.0'].dist.tarball).toBe(
-      'https://registry.npmjs.org/large/-/large-1.0.0.tgz',
+      'https://npm.lemonize.cyou/large/-/large-1.0.0.tgz',
     );
     await free.flush();
 
@@ -242,6 +248,54 @@ describe('packument proxying', () => {
       'https://npm.lemonize.cyou/large/-/large-1.0.0.tgz',
     );
     await full.flush();
+  });
+
+  it('stream-rewrites an npm tarball URL split across upstream chunks', async () => {
+    const packument = {
+      name: 'chunked-large',
+      description: 'x'.repeat(300_000),
+      versions: {
+        '1.0.0': {
+          dist: {
+            tarball: 'https://registry.npmjs.org/chunked-large/-/chunked-large-1.0.0.tgz',
+            integrity: 'sha512-preserved',
+          },
+        },
+      },
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(packument));
+    const marker = new TextEncoder().encode('registry.npmjs.org');
+    const markerStart = bytes.findIndex((_value, index) =>
+      marker.every((value, offset) => bytes[index + offset] === value),
+    );
+    expect(markerStart).toBeGreaterThan(0);
+    const split = markerStart + 8;
+    const harness = createHarness(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(bytes.slice(0, split));
+              controller.enqueue(bytes.slice(split));
+              controller.close();
+            },
+          }),
+          {
+            headers: {
+              'content-length': String(bytes.byteLength),
+              'content-type': 'application/json',
+            },
+          },
+        ),
+    );
+
+    const response = await harness.request('/chunked-large');
+    const body = (await response.json()) as typeof packument;
+    expect(response.headers.get('x-lemonize-packument-mode')).toBe('free-tier-streaming-rewrite');
+    expect(body.versions['1.0.0'].dist).toEqual({
+      tarball: 'https://npm.lemonize.cyou/chunked-large/-/chunked-large-1.0.0.tgz',
+      integrity: 'sha512-preserved',
+    });
   });
 });
 
@@ -335,23 +389,25 @@ describe('tarball proxying', () => {
   });
 
   it('enforces declared full and ranged tarball limits', async () => {
-    const oversized = createHarness(() =>
-      new Response(new Uint8Array([1]), {
-        headers: { 'content-length': String(MAX_TARBALL_BYTES + 1) },
-      }),
+    const oversized = createHarness(
+      () =>
+        new Response(new Uint8Array([1]), {
+          headers: { 'content-length': String(MAX_TARBALL_BYTES + 1) },
+        }),
     );
     const full = await oversized.request('/pkg/-/pkg.tgz');
     expect(full.status).toBe(502);
     expect(await full.json()).toMatchObject({ code: 'TARBALL_TOO_LARGE' });
 
-    const oversizedRange = createHarness(() =>
-      new Response(new Uint8Array([1]), {
-        status: 206,
-        headers: {
-          'content-length': '1',
-          'content-range': `bytes 0-0/${MAX_TARBALL_BYTES + 1}`,
-        },
-      }),
+    const oversizedRange = createHarness(
+      () =>
+        new Response(new Uint8Array([1]), {
+          status: 206,
+          headers: {
+            'content-length': '1',
+            'content-range': `bytes 0-0/${MAX_TARBALL_BYTES + 1}`,
+          },
+        }),
     );
     const partial = await oversizedRange.request('/pkg/-/pkg.tgz', {
       headers: { range: 'bytes=0-0' },
@@ -392,9 +448,7 @@ describe('npm utility routes and read-only policy', () => {
 
   it('canonicalizes supported queries and rejects cache-fragmentation parameters', async () => {
     const harness = createHarness((request) => jsonResponse({ url: request.url }));
-    const search = await harness.request(
-      '/-/v1/search?size=20&text=vitest&quality=1&from=0',
-    );
+    const search = await harness.request('/-/v1/search?size=20&text=vitest&quality=1&from=0');
     expect(await search.json()).toEqual({
       url: 'https://registry.npmjs.org/-/v1/search?text=vitest&size=20&from=0&quality=1&popularity=0.98&maintenance=0.5',
     });
@@ -405,38 +459,38 @@ describe('npm utility routes and read-only policy', () => {
     expect(harness.upstreamFetch).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    '/-/npm/v1/security/advisories/bulk',
-    '/-/npm/v1/security/audits/quick',
-  ])('allows bounded POST audit requests at %s', async (path) => {
-    const payload = new Uint8Array([31, 139, 8, 0, 10, 20, 30]);
-    const harness = createHarness(async (request) => {
-      expect(request.method).toBe('POST');
-      expect(request.url).toBe(`https://registry.npmjs.org${path}`);
-      expect(request.headers.get('content-encoding')).toBe('gzip');
-      expect(request.headers.get('content-type')).toBe('application/json');
-      expect(request.headers.get('authorization')).toBeNull();
-      expect(request.headers.get('cookie')).toBeNull();
-      expect(new Uint8Array(await request.arrayBuffer())).toEqual(payload);
-      return jsonResponse({ advisories: {} }, { headers: { 'set-cookie': 'remove=me' } });
-    });
+  it.each(['/-/npm/v1/security/advisories/bulk', '/-/npm/v1/security/audits/quick'])(
+    'allows bounded POST audit requests at %s',
+    async (path) => {
+      const payload = new Uint8Array([31, 139, 8, 0, 10, 20, 30]);
+      const harness = createHarness(async (request) => {
+        expect(request.method).toBe('POST');
+        expect(request.url).toBe(`https://registry.npmjs.org${path}`);
+        expect(request.headers.get('content-encoding')).toBe('gzip');
+        expect(request.headers.get('content-type')).toBe('application/json');
+        expect(request.headers.get('authorization')).toBeNull();
+        expect(request.headers.get('cookie')).toBeNull();
+        expect(new Uint8Array(await request.arrayBuffer())).toEqual(payload);
+        return jsonResponse({ advisories: {} }, { headers: { 'set-cookie': 'remove=me' } });
+      });
 
-    const response = await harness.request(path, {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer secret',
-        cookie: 'session=secret',
-        'content-encoding': 'gzip',
-        'content-type': 'application/json',
-      },
-      body: payload,
-    });
-    expect(response.status).toBe(200);
-    expect(response.headers.get('cache-control')).toBe('private, no-store');
-    expect(response.headers.get('x-lemonize-cache')).toBe('BYPASS');
-    expect(response.headers.get('set-cookie')).toBeNull();
-    expect(await response.json()).toEqual({ advisories: {} });
-  });
+      const response = await harness.request(path, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret',
+          cookie: 'session=secret',
+          'content-encoding': 'gzip',
+          'content-type': 'application/json',
+        },
+        body: payload,
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(response.headers.get('x-lemonize-cache')).toBe('BYPASS');
+      expect(response.headers.get('set-cookie')).toBeNull();
+      expect(await response.json()).toEqual({ advisories: {} });
+    },
+  );
 
   it('rejects audit payloads larger than 1 MiB without contacting npm', async () => {
     const harness = createHarness(() => jsonResponse({ shouldNot: 'run' }));
@@ -477,8 +531,12 @@ describe('npm utility routes and read-only policy', () => {
   });
 
   it('rejects redirects outside the hardcoded npm origin', async () => {
-    const harness = createHarness(() =>
-      new Response(null, { status: 302, headers: { location: 'https://attacker.example/package' } }),
+    const harness = createHarness(
+      () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://attacker.example/package' },
+        }),
     );
     const response = await harness.request('/pkg');
     expect(response.status).toBe(502);
@@ -528,35 +586,34 @@ describe('operational fail-safes', () => {
 
   it.each([
     ['metadata', '/pkg', { metadataAuditTimeoutMs: 5 }],
-    [
-      'audit',
-      '/-/npm/v1/security/audits/quick',
-      { metadataAuditTimeoutMs: 5 },
-    ],
+    ['audit', '/-/npm/v1/security/audits/quick', { metadataAuditTimeoutMs: 5 }],
     ['tarball', '/pkg/-/pkg.tgz', { tarballTimeoutMs: 5 }],
-  ])('aborts stalled %s upstream headers at the configured deadline', async (_kind, path, timeouts) => {
-    let upstreamSignal: AbortSignal | undefined;
-    const harness = createHarness(
-      (request) => {
-        upstreamSignal = request.signal;
-        return new Promise<Response>((_resolve, reject) => {
-          const onAbort = () => reject(request.signal.reason ?? new Error('aborted'));
-          if (request.signal.aborted) onAbort();
-          else request.signal.addEventListener('abort', onAbort, { once: true });
-        });
-      },
-      null,
-      timeouts,
-    );
-    const response = await harness.request(path, {
-      method: _kind === 'audit' ? 'POST' : 'GET',
-      body: _kind === 'audit' ? '{}' : undefined,
-      headers: _kind === 'audit' ? { 'content-type': 'application/json' } : undefined,
-    });
-    expect(response.status).toBe(504);
-    expect(await response.json()).toMatchObject({ code: 'UPSTREAM_TIMEOUT' });
-    expect(upstreamSignal?.aborted).toBe(true);
-  });
+  ])(
+    'aborts stalled %s upstream headers at the configured deadline',
+    async (_kind, path, timeouts) => {
+      let upstreamSignal: AbortSignal | undefined;
+      const harness = createHarness(
+        (request) => {
+          upstreamSignal = request.signal;
+          return new Promise<Response>((_resolve, reject) => {
+            const onAbort = () => reject(request.signal.reason ?? new Error('aborted'));
+            if (request.signal.aborted) onAbort();
+            else request.signal.addEventListener('abort', onAbort, { once: true });
+          });
+        },
+        null,
+        timeouts,
+      );
+      const response = await harness.request(path, {
+        method: _kind === 'audit' ? 'POST' : 'GET',
+        body: _kind === 'audit' ? '{}' : undefined,
+        headers: _kind === 'audit' ? { 'content-type': 'application/json' } : undefined,
+      });
+      expect(response.status).toBe(504);
+      expect(await response.json()).toMatchObject({ code: 'UPSTREAM_TIMEOUT' });
+      expect(upstreamSignal?.aborted).toBe(true);
+    },
+  );
 
   it('does not couple the upstream header deadline to downstream tarball reading', async () => {
     let upstreamSignal: AbortSignal | undefined;
@@ -588,10 +645,9 @@ describe('operational fail-safes', () => {
   ])('returns 504 when a buffered %s body stalls', async (_kind, path, method) => {
     const harness = createHarness(
       () =>
-        new Response(
-          new ReadableStream<Uint8Array>({ start() {} }),
-          { headers: { 'content-length': '1', 'content-type': 'application/json' } },
-        ),
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          headers: { 'content-length': '1', 'content-type': 'application/json' },
+        }),
       null,
       { metadataAuditTimeoutMs: 5 },
     );
@@ -607,10 +663,9 @@ describe('operational fail-safes', () => {
   it('errors a tarball stream when an active upstream read stalls', async () => {
     const harness = createHarness(
       () =>
-        new Response(
-          new ReadableStream<Uint8Array>({ start() {} }),
-          { headers: { 'content-length': '1' } },
-        ),
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          headers: { 'content-length': '1' },
+        }),
       null,
       { tarballTimeoutMs: 5 },
     );
@@ -640,6 +695,55 @@ describe('origin admission integration', () => {
 
     expect(harness.admitOrigin).toHaveBeenCalledTimes(1);
     expect(harness.upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechecks metadata cache after admission before fetching npm', async () => {
+    const cache = new MemoryCache();
+    let lookups = 0;
+    vi.spyOn(cache, 'match').mockImplementation(async () => {
+      lookups += 1;
+      return lookups === 1
+        ? undefined
+        : jsonResponse({ name: 'pkg', versions: {} }, { headers: { 'cache-control': 'public' } });
+    });
+    const harness = createHarness(() => jsonResponse({ shouldNot: 'run' }), cache);
+
+    const response = await harness.request('/pkg');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-lemonize-cache')).toBe('HIT');
+    expect(await response.json()).toMatchObject({ name: 'pkg' });
+    expect(lookups).toBe(2);
+    expect(harness.admitOrigin).toHaveBeenCalledTimes(1);
+    expect(harness.upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it('rechecks tarball cache after admission before fetching npm', async () => {
+    const bytes = new Uint8Array([31, 139, 8, 0]);
+    const cache = new MemoryCache();
+    let lookups = 0;
+    vi.spyOn(cache, 'match').mockImplementation(async () => {
+      lookups += 1;
+      return lookups === 1
+        ? undefined
+        : new Response(bytes, {
+            headers: {
+              'cache-control': 'public, max-age=31536000, immutable',
+              'content-length': String(bytes.byteLength),
+            },
+          });
+    });
+    const harness = createHarness(
+      () => new Response('should not run', { headers: { 'content-length': '14' } }),
+      cache,
+    );
+
+    const response = await harness.request('/pkg/-/pkg-1.0.0.tgz');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-lemonize-cache')).toBe('HIT');
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    expect(lookups).toBe(2);
+    expect(harness.admitOrigin).toHaveBeenCalledTimes(1);
+    expect(harness.upstreamFetch).not.toHaveBeenCalled();
   });
 
   it('maps every supported origin route to its budget class', async () => {

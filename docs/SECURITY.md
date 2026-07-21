@@ -114,7 +114,7 @@ Scanner errors and timeouts retry in bounded scheduled batches and fail closed. 
 
 `npm.lemonize.cyou` is a separate read-only Worker with an explicit route/method allowlist. It strips credentials and cookies, follows only safe npmjs redirects, preserves tarball bytes/integrity, and never persists npm content in R2, KV, or Appwrite. Cache misses require a transactionally serialized Durable Object admission decision with hashed client-IP, global, and route-specific origin budgets; unavailable admission fails closed.
 
-Free mode rewrites tarball URLs only for successful packuments at or below 256 KiB. Larger packuments stream without rewriting up to a 16 MiB hard cap, so their tarballs can bypass Lemonize and go directly to npmjs. Complete tarballs are capped at 100 MiB. An origin Range miss is not cached as a partial object. Cloudflare WAF/rate rules must protect the hostname before Worker execution; those provider-side rules are a production gate, are not provisioned by the Worker configuration, and require DNS/WAF authority absent from the current OAuth session.
+Free mode fully parses and rewrites successful packuments at or below 256 KiB. Larger packuments use a bounded UTF-8 stream that rewrites only exact official npm registry URL prefixes without retaining the whole document. Complete tarballs are capped at 100 MiB. An origin Range miss is not cached as a partial object. Cloudflare WAF/rate rules must protect the hostname before Worker execution; those provider-side rules are a production gate, are not provisioned by the Worker configuration, and require WAF/rulesets authority absent from the current token.
 
 ## Production cutover rule
 

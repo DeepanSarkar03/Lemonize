@@ -17,7 +17,12 @@ import {
   type PackumentRepresentation,
   type TarballRoute,
 } from './protocol.js';
-import { hashClientIp, type AdmissionCandidate, type AdmissionDecision, type OriginRouteClass } from './admission.js';
+import {
+  hashClientIp,
+  type AdmissionCandidate,
+  type AdmissionDecision,
+  type OriginRouteClass,
+} from './admission.js';
 
 const MAX_REQUEST_URL_BYTES = 8192;
 const BUFFERED_PACKUMENT_BYTES = 256 * 1024;
@@ -111,7 +116,13 @@ function cleanHeaders(source: Headers): Headers {
   return headers;
 }
 
-function jsonError(status: number, code: string, message: string, requestId: string, allow?: string): Response {
+function jsonError(
+  status: number,
+  code: string,
+  message: string,
+  requestId: string,
+  allow?: string,
+): Response {
   const headers = new Headers({
     'cache-control': 'private, no-store',
     'content-type': 'application/json; charset=utf-8',
@@ -129,7 +140,11 @@ function finalizeResponse(response: Response, requestId: string): Response {
   headers.set('referrer-policy', 'no-referrer');
   headers.set('strict-transport-security', 'max-age=63072000; includeSubDomains');
   headers.set('x-request-id', requestId);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function clientResponse(
@@ -147,7 +162,8 @@ function clientResponse(
     response.status === 200 &&
     etag &&
     ifNoneMatch &&
-    (ifNoneMatch.trim() === '*' || ifNoneMatch.split(',').some((candidate) => candidate.trim() === etag))
+    (ifNoneMatch.trim() === '*' ||
+      ifNoneMatch.split(',').some((candidate) => candidate.trim() === etag))
   ) {
     void response.body?.cancel().catch(() => undefined);
     headers.delete('content-length');
@@ -165,10 +181,19 @@ function clientResponse(
 function parseContentLength(headers: Headers): number | null {
   const raw = headers.get('content-length');
   if (raw === null) return null;
-  if (!/^\d+$/.test(raw)) throw new ProxyHttpError(502, 'INVALID_UPSTREAM_LENGTH', 'The npm registry returned an invalid Content-Length.');
+  if (!/^\d+$/.test(raw))
+    throw new ProxyHttpError(
+      502,
+      'INVALID_UPSTREAM_LENGTH',
+      'The npm registry returned an invalid Content-Length.',
+    );
   const value = Number(raw);
   if (!Number.isSafeInteger(value)) {
-    throw new ProxyHttpError(502, 'INVALID_UPSTREAM_LENGTH', 'The npm registry returned an invalid Content-Length.');
+    throw new ProxyHttpError(
+      502,
+      'INVALID_UPSTREAM_LENGTH',
+      'The npm registry returned an invalid Content-Length.',
+    );
   }
   return value;
 }
@@ -260,7 +285,11 @@ async function readAuditBody(request: Request): Promise<Uint8Array> {
     );
   } catch (error) {
     if (error instanceof ProxyHttpError) throw error;
-    throw new ProxyHttpError(400, 'INVALID_AUDIT_PAYLOAD', 'The npm audit payload could not be read.');
+    throw new ProxyHttpError(
+      400,
+      'INVALID_AUDIT_PAYLOAD',
+      'The npm audit payload could not be read.',
+    );
   }
 }
 
@@ -297,9 +326,87 @@ function limitedPassthroughStream(
   });
 }
 
+/**
+ * Rewrite an ASCII URL prefix while preserving a bounded UTF-8 stream.
+ *
+ * Keeping only search.length - 1 trailing characters between chunks makes
+ * replacements work even when npm splits the URL across network frames. This
+ * lets free-tier mode keep large packuments on Lemonize without retaining or
+ * parsing the complete JSON document in Worker memory.
+ */
+function replaceUtf8Stream(
+  stream: ReadableStream<Uint8Array>,
+  search: string,
+  replacement: string,
+  maximumBytes: number,
+  idleTimeoutMilliseconds?: number,
+): ReadableStream<Uint8Array> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
+  const encoder = new TextEncoder();
+  let pending = '';
+  let total = 0;
+
+  const replace = (value: string) => value.split(search).join(replacement);
+
+  const replaceCompleteMatches = (value: string): string => {
+    let cursor = 0;
+    let output = '';
+    for (;;) {
+      const index = value.indexOf(search, cursor);
+      if (index < 0) break;
+      output += value.slice(cursor, index) + replacement;
+      cursor = index + search.length;
+    }
+
+    const remainder = value.slice(cursor);
+    let retainedCharacters = Math.min(search.length - 1, remainder.length);
+    while (retainedCharacters > 0 && !remainder.endsWith(search.slice(0, retainedCharacters))) {
+      retainedCharacters -= 1;
+    }
+    const emitLength = remainder.length - retainedCharacters;
+    pending = remainder.slice(emitLength);
+    return output + remainder.slice(0, emitLength);
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await readWithIdleTimeout(reader, idleTimeoutMilliseconds);
+        if (result.done) {
+          const output = replace(pending + decoder.decode());
+          if (output.length > 0) controller.enqueue(encoder.encode(output));
+          controller.close();
+          reader.releaseLock();
+          return;
+        }
+
+        total += result.value.byteLength;
+        if (total > maximumBytes) {
+          await reader.cancel('upstream response exceeds proxy size limit').catch(() => undefined);
+          controller.error(new Error('Upstream response exceeded the streaming size limit.'));
+          return;
+        }
+
+        const decoded = pending + decoder.decode(result.value, { stream: true });
+        const output = replaceCompleteMatches(decoded);
+        if (output.length > 0) controller.enqueue(encoder.encode(output));
+      } catch (error) {
+        await reader.cancel('invalid upstream packument stream').catch(() => undefined);
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+}
+
 async function sha256Etag(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
-  const hex = Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
+  const hex = Array.from(new Uint8Array(digest), (value) =>
+    value.toString(16).padStart(2, '0'),
+  ).join('');
   return `"sha256-${hex}"`;
 }
 
@@ -413,7 +520,11 @@ async function fetchFromRegistry(
       if (deadline.timedOut || abortController.signal.aborted) {
         throw new ProxyHttpError(504, 'UPSTREAM_TIMEOUT', 'The npm registry request timed out.');
       }
-      throw new ProxyHttpError(502, 'UPSTREAM_UNAVAILABLE', 'The npm registry could not be reached.');
+      throw new ProxyHttpError(
+        502,
+        'UPSTREAM_UNAVAILABLE',
+        'The npm registry could not be reached.',
+      );
     }
 
     if (deadline.timedOut) {
@@ -454,7 +565,11 @@ async function fetchFromRegistry(
             finish();
             controller.error(
               deadline.timedOut
-                ? new ProxyHttpError(504, 'UPSTREAM_TIMEOUT', 'The npm registry response timed out.')
+                ? new ProxyHttpError(
+                    504,
+                    'UPSTREAM_TIMEOUT',
+                    'The npm registry response timed out.',
+                  )
                 : error,
             );
           }
@@ -474,14 +589,22 @@ async function fetchFromRegistry(
     if (redirectCount === 3) {
       clearTimeout(timeout);
       await response.body?.cancel().catch(() => undefined);
-      throw new ProxyHttpError(502, 'UPSTREAM_REDIRECT_LIMIT', 'The npm registry returned too many redirects.');
+      throw new ProxyHttpError(
+        502,
+        'UPSTREAM_REDIRECT_LIMIT',
+        'The npm registry returned too many redirects.',
+      );
     }
 
     const location = response.headers.get('location');
     if (!location) {
       clearTimeout(timeout);
       await response.body?.cancel().catch(() => undefined);
-      throw new ProxyHttpError(502, 'INVALID_UPSTREAM_REDIRECT', 'The npm registry returned an invalid redirect.');
+      throw new ProxyHttpError(
+        502,
+        'INVALID_UPSTREAM_REDIRECT',
+        'The npm registry returned an invalid redirect.',
+      );
     }
     let nextUrl: URL;
     try {
@@ -489,23 +612,39 @@ async function fetchFromRegistry(
     } catch {
       clearTimeout(timeout);
       await response.body?.cancel().catch(() => undefined);
-      throw new ProxyHttpError(502, 'INVALID_UPSTREAM_REDIRECT', 'The npm registry returned an invalid redirect.');
+      throw new ProxyHttpError(
+        502,
+        'INVALID_UPSTREAM_REDIRECT',
+        'The npm registry returned an invalid redirect.',
+      );
     }
     if (nextUrl.origin !== UPSTREAM_ORIGIN || nextUrl.username !== '' || nextUrl.password !== '') {
       clearTimeout(timeout);
       await response.body?.cancel().catch(() => undefined);
-      throw new ProxyHttpError(502, 'UNSAFE_UPSTREAM_REDIRECT', 'The npm registry attempted to redirect outside its origin.');
+      throw new ProxyHttpError(
+        502,
+        'UNSAFE_UPSTREAM_REDIRECT',
+        'The npm registry attempted to redirect outside its origin.',
+      );
     }
     if (method === 'POST' && response.status !== 307 && response.status !== 308) {
       clearTimeout(timeout);
       await response.body?.cancel().catch(() => undefined);
-      throw new ProxyHttpError(502, 'INVALID_UPSTREAM_REDIRECT', 'The npm registry returned an unsafe audit redirect.');
+      throw new ProxyHttpError(
+        502,
+        'INVALID_UPSTREAM_REDIRECT',
+        'The npm registry returned an unsafe audit redirect.',
+      );
     }
     await response.body?.cancel().catch(() => undefined);
     currentUrl = nextUrl;
   }
   clearTimeout(timeout);
-  throw new ProxyHttpError(502, 'UPSTREAM_REDIRECT_LIMIT', 'The npm registry returned too many redirects.');
+  throw new ProxyHttpError(
+    502,
+    'UPSTREAM_REDIRECT_LIMIT',
+    'The npm registry returned too many redirects.',
+  );
 }
 
 function upstreamUrl(pathname: string, search: string): URL {
@@ -620,9 +759,23 @@ async function normalizedPackumentResponse(
     const headers = cleanHeaders(upstream.headers);
     headers.set('content-type', `${representation.accept}; charset=utf-8`);
     headers.set('vary', 'Accept');
-    headers.set('x-lemonize-packument-mode', 'free-tier-passthrough');
+    headers.delete('content-encoding');
+    headers.delete('content-length');
+    headers.delete('content-md5');
+    headers.delete('content-range');
+    headers.delete('digest');
+    headers.delete('etag');
+    headers.set('x-lemonize-packument-mode', 'free-tier-streaming-rewrite');
+    const upstreamPrefix = `${UPSTREAM_ORIGIN}/`;
+    const publicPrefix = `${publicOrigin}/`;
     return new Response(
-      limitedPassthroughStream(upstream.body, MAX_PACKUMENT_BYTES, idleTimeoutMilliseconds),
+      replaceUtf8Stream(
+        upstream.body,
+        upstreamPrefix,
+        publicPrefix,
+        MAX_PACKUMENT_BYTES,
+        idleTimeoutMilliseconds,
+      ),
       { status: upstream.status, statusText: upstream.statusText, headers },
     );
   }
@@ -646,30 +799,50 @@ async function normalizedPackumentResponse(
 
   if (upstream.status < 200 || upstream.status >= 300) {
     headers.set('content-length', String(bytes.byteLength));
-    return new Response(bytes, { status: upstream.status, statusText: upstream.statusText, headers });
+    return new Response(bytes, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers,
+    });
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
   } catch {
-    throw new ProxyHttpError(502, 'INVALID_PACKUMENT', 'The npm registry returned invalid package metadata.');
+    throw new ProxyHttpError(
+      502,
+      'INVALID_PACKUMENT',
+      'The npm registry returned invalid package metadata.',
+    );
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new ProxyHttpError(502, 'INVALID_PACKUMENT', 'The npm registry returned invalid package metadata.');
+    throw new ProxyHttpError(
+      502,
+      'INVALID_PACKUMENT',
+      'The npm registry returned invalid package metadata.',
+    );
   }
 
   const output = new TextEncoder().encode(
     JSON.stringify(rewritePackumentTarballs(parsed, publicOrigin)),
   );
   if (output.byteLength > MAX_PACKUMENT_BYTES) {
-    throw new ProxyHttpError(502, 'PACKUMENT_TOO_LARGE', 'The rewritten npm packument exceeds the 16 MiB proxy limit.');
+    throw new ProxyHttpError(
+      502,
+      'PACKUMENT_TOO_LARGE',
+      'The rewritten npm packument exceeds the 16 MiB proxy limit.',
+    );
   }
   headers.set('content-length', String(output.byteLength));
   headers.set('content-type', `${representation.accept}; charset=utf-8`);
   headers.set('etag', await sha256Etag(output));
   headers.set('vary', 'Accept');
-  return new Response(output, { status: upstream.status, statusText: upstream.statusText, headers });
+  return new Response(output, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers,
+  });
 }
 
 async function normalizedUtilityResponse(
@@ -703,17 +876,27 @@ function applyMetadataCaching(response: Response): { response: Response; cacheab
   const headers = cleanHeaders(response.headers);
   let cacheable = false;
   if (response.status >= 200 && response.status < 300) {
-    headers.set('cache-control', `public, max-age=${METADATA_TTL_SECONDS}, s-maxage=${METADATA_TTL_SECONDS}`);
+    headers.set(
+      'cache-control',
+      `public, max-age=${METADATA_TTL_SECONDS}, s-maxage=${METADATA_TTL_SECONDS}`,
+    );
     cacheable = true;
   } else if (NEGATIVE_STATUSES.has(response.status)) {
-    headers.set('cache-control', `public, max-age=${NEGATIVE_TTL_SECONDS}, s-maxage=${NEGATIVE_TTL_SECONDS}`);
+    headers.set(
+      'cache-control',
+      `public, max-age=${NEGATIVE_TTL_SECONDS}, s-maxage=${NEGATIVE_TTL_SECONDS}`,
+    );
     cacheable = true;
   } else {
     headers.set('cache-control', 'no-store');
   }
   headers.delete('age');
   return {
-    response: new Response(response.body, { status: response.status, statusText: response.statusText, headers }),
+    response: new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    }),
     cacheable,
   };
 }
@@ -728,21 +911,32 @@ async function handleMetadata(
 ): Promise<Response> {
   const incomingUrl = new URL(request.url);
   const representation =
-    route.kind === 'packument' ? selectPackumentRepresentation(request.headers.get('accept')) : undefined;
-  const pathname = route.kind === 'packument' ? packumentPath(route.packageName) : incomingUrl.pathname;
+    route.kind === 'packument'
+      ? selectPackumentRepresentation(request.headers.get('accept'))
+      : undefined;
+  const pathname =
+    route.kind === 'packument' ? packumentPath(route.packageName) : incomingUrl.pathname;
   const target = upstreamUrl(pathname, canonicalSearch(route, incomingUrl));
   const bypassCache = route.kind === 'ping' && target.search === '?write=true';
   const key = cacheKey(target, publicOrigin, representation?.variant);
-  const cached = bypassCache
+  let cached = bypassCache
     ? { cache: null, status: 'BYPASS' as const }
     : await lookupCache(dependencies, key);
-  if (cached.response) return clientResponse(cached.response, 'HIT', request.method, request.headers);
+  if (cached.response)
+    return clientResponse(cached.response, 'HIT', request.method, request.headers);
 
   await requireOriginAdmission(
     request,
     dependencies,
     route.kind === 'search' ? 'search' : 'metadata',
   );
+  if (!bypassCache) {
+    const rechecked = await lookupCache(dependencies, key);
+    if (rechecked.response) {
+      return clientResponse(rechecked.response, 'HIT', request.method, request.headers);
+    }
+    if (!cached.cache && rechecked.cache) cached = rechecked;
+  }
   const upstream = await fetchFromRegistry(
     dependencies,
     target,
@@ -772,12 +966,16 @@ async function handleMetadata(
         response: new Response(normalized.body, {
           status: normalized.status,
           statusText: normalized.statusText,
-          headers: { ...Object.fromEntries(cleanHeaders(normalized.headers)), 'cache-control': 'no-store' },
+          headers: {
+            ...Object.fromEntries(cleanHeaders(normalized.headers)),
+            'cache-control': 'no-store',
+          },
         }),
         cacheable: false,
       }
     : applyMetadataCaching(normalized);
-  if (cachePolicy.cacheable) scheduleCachePut(runtime, cached.cache, key, cachePolicy.response.clone());
+  if (cachePolicy.cacheable)
+    scheduleCachePut(runtime, cached.cache, key, cachePolicy.response.clone());
   return clientResponse(cachePolicy.response, cached.status, request.method, request.headers);
 }
 
@@ -809,25 +1007,42 @@ function normalizedTarballResponse(
     }
     if (declaredLength > MAX_TARBALL_BYTES) {
       void upstream.body?.cancel().catch(() => undefined);
-      throw new ProxyHttpError(502, 'TARBALL_TOO_LARGE', 'The npm tarball exceeds the 100 MiB proxy limit.');
+      throw new ProxyHttpError(
+        502,
+        'TARBALL_TOO_LARGE',
+        'The npm tarball exceeds the 100 MiB proxy limit.',
+      );
     }
     headers.set('cache-control', `public, max-age=${IMMUTABLE_TTL_SECONDS}, immutable`);
   } else if (upstream.status === 206) {
     const total = parseContentRangeTotal(headers);
-    if (total === null || total > MAX_TARBALL_BYTES || (declaredLength !== null && declaredLength > MAX_TARBALL_BYTES)) {
+    if (
+      total === null ||
+      total > MAX_TARBALL_BYTES ||
+      (declaredLength !== null && declaredLength > MAX_TARBALL_BYTES)
+    ) {
       void upstream.body?.cancel().catch(() => undefined);
-      throw new ProxyHttpError(502, 'TARBALL_TOO_LARGE', 'The npm tarball exceeds the 100 MiB proxy limit.');
+      throw new ProxyHttpError(
+        502,
+        'TARBALL_TOO_LARGE',
+        'The npm tarball exceeds the 100 MiB proxy limit.',
+      );
     }
     headers.set('cache-control', `public, max-age=${IMMUTABLE_TTL_SECONDS}, immutable`);
   } else if (NEGATIVE_STATUSES.has(upstream.status)) {
-    headers.set('cache-control', `public, max-age=${NEGATIVE_TTL_SECONDS}, s-maxage=${NEGATIVE_TTL_SECONDS}`);
+    headers.set(
+      'cache-control',
+      `public, max-age=${NEGATIVE_TTL_SECONDS}, s-maxage=${NEGATIVE_TTL_SECONDS}`,
+    );
   } else if (upstream.status !== 304) {
     headers.set('cache-control', 'no-store');
   }
   headers.delete('age');
 
   const body =
-    requestMethod !== 'HEAD' && upstream.body && (upstream.status === 200 || upstream.status === 206)
+    requestMethod !== 'HEAD' &&
+    upstream.body &&
+    (upstream.status === 200 || upstream.status === 206)
       ? limitedPassthroughStream(upstream.body, MAX_TARBALL_BYTES, idleTimeoutMilliseconds)
       : upstream.body;
   if (isRange) headers.set('accept-ranges', headers.get('accept-ranges') ?? 'bytes');
@@ -851,14 +1066,22 @@ async function normalizedTarballHeadResponse(upstream: Response): Promise<Respon
     }
     if (declaredLength > MAX_TARBALL_BYTES) {
       await upstream.body?.cancel().catch(() => undefined);
-      throw new ProxyHttpError(502, 'TARBALL_TOO_LARGE', 'The npm tarball exceeds the 100 MiB proxy limit.');
+      throw new ProxyHttpError(
+        502,
+        'TARBALL_TOO_LARGE',
+        'The npm tarball exceeds the 100 MiB proxy limit.',
+      );
     }
     headers.set('cache-control', `public, max-age=${IMMUTABLE_TTL_SECONDS}, immutable`);
   } else if (upstream.status === 206) {
     const total = parseContentRangeTotal(headers);
     if (total === null || total > MAX_TARBALL_BYTES) {
       await upstream.body?.cancel().catch(() => undefined);
-      throw new ProxyHttpError(502, 'TARBALL_TOO_LARGE', 'The npm tarball exceeds the 100 MiB proxy limit.');
+      throw new ProxyHttpError(
+        502,
+        'TARBALL_TOO_LARGE',
+        'The npm tarball exceeds the 100 MiB proxy limit.',
+      );
     }
     status = 200;
     statusText = 'OK';
@@ -867,7 +1090,10 @@ async function normalizedTarballHeadResponse(upstream: Response): Promise<Respon
     headers.set('accept-ranges', 'bytes');
     headers.set('cache-control', `public, max-age=${IMMUTABLE_TTL_SECONDS}, immutable`);
   } else if (NEGATIVE_STATUSES.has(upstream.status)) {
-    headers.set('cache-control', `public, max-age=${NEGATIVE_TTL_SECONDS}, s-maxage=${NEGATIVE_TTL_SECONDS}`);
+    headers.set(
+      'cache-control',
+      `public, max-age=${NEGATIVE_TTL_SECONDS}, s-maxage=${NEGATIVE_TTL_SECONDS}`,
+    );
   } else if (upstream.status !== 304) {
     headers.set('cache-control', 'no-store');
   }
@@ -910,13 +1136,10 @@ async function handleTarball(
     }
   }
   const rangeKey =
-    isRange && !hasPrecondition
-      ? new Request(key, { headers: { range: range as string } })
-      : key;
-  let cached =
-    hasPrecondition
-      ? { cache: null, status: 'BYPASS' as const }
-      : await lookupCache(dependencies, rangeKey);
+    isRange && !hasPrecondition ? new Request(key, { headers: { range: range as string } }) : key;
+  let cached = hasPrecondition
+    ? { cache: null, status: 'BYPASS' as const }
+    : await lookupCache(dependencies, rangeKey);
   if (isRange && cached.response && cached.response.status !== 206) {
     await cached.response.body?.cancel().catch(() => undefined);
     cached = { cache: cached.cache, status: cached.status };
@@ -926,6 +1149,15 @@ async function handleTarball(
   }
 
   await requireOriginAdmission(request, dependencies, 'tarball');
+  if (!hasPrecondition) {
+    const rechecked = await lookupCache(dependencies, rangeKey);
+    if (isRange && rechecked.response && rechecked.response.status !== 206) {
+      await rechecked.response.body?.cancel().catch(() => undefined);
+    } else if (rechecked.response) {
+      return clientResponse(rechecked.response, 'HIT', request.method, request.headers);
+    }
+    if (!cached.cache && rechecked.cache) cached = rechecked;
+  }
   const requestHeaders = outboundTarballHeaders(request);
   if (request.method === 'HEAD') requestHeaders.set('range', 'bytes=0-0');
   const upstream = await fetchFromRegistry(
@@ -960,7 +1192,11 @@ async function handleTarball(
   );
 }
 
-async function handleAudit(request: Request, route: NpmRoute, dependencies: ProxyDependencies): Promise<Response> {
+async function handleAudit(
+  request: Request,
+  route: NpmRoute,
+  dependencies: ProxyDependencies,
+): Promise<Response> {
   if (route.kind !== 'audit-bulk' && route.kind !== 'audit-quick') {
     throw new ProxyHttpError(500, 'INTERNAL_ERROR', 'The audit route could not be resolved.');
   }
@@ -1065,14 +1301,21 @@ export async function handleProxyRequest(
         response = methodNotAllowed(requestId, 'GET, HEAD');
       } else {
         const route = classifyPath(incomingUrl.pathname);
-        response = route ? await handleAudit(request, route, dependencies) : methodNotAllowed(requestId, 'POST');
+        response = route
+          ? await handleAudit(request, route, dependencies)
+          : methodNotAllowed(requestId, 'POST');
       }
     } else if (request.method !== 'GET' && request.method !== 'HEAD') {
       response = methodNotAllowed(requestId, isAuditPath ? 'POST' : 'GET, HEAD');
     } else {
       const route = classifyPath(incomingUrl.pathname);
       if (!route) {
-        response = jsonError(404, 'NOT_FOUND', 'No supported npm registry route matches this URL.', requestId);
+        response = jsonError(
+          404,
+          'NOT_FOUND',
+          'No supported npm registry route matches this URL.',
+          requestId,
+        );
       } else if (route.kind === 'audit-bulk' || route.kind === 'audit-quick') {
         response = methodNotAllowed(requestId, 'POST');
       } else if (route.kind === 'tarball') {
@@ -1097,8 +1340,16 @@ export async function handleProxyRequest(
         response.headers.set('retry-after', String(error.retryAfterSeconds));
       }
     } else {
-      console.error('npm proxy request failed', error instanceof Error ? error.name : 'UnknownError');
-      response = jsonError(502, 'PROXY_FAILURE', 'The npm proxy could not complete the request.', requestId);
+      console.error(
+        'npm proxy request failed',
+        error instanceof Error ? error.name : 'UnknownError',
+      );
+      response = jsonError(
+        502,
+        'PROXY_FAILURE',
+        'The npm proxy could not complete the request.',
+        requestId,
+      );
     }
   }
   return finalizeResponse(response, requestId);
