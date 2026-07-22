@@ -64,6 +64,8 @@ jobs:
   package:
     needs: gate
     runs-on: ubuntu-latest
+    outputs:
+      registry_state: ${{ steps.registry_state.outputs.value }}
     permissions:
       contents: read
     steps:
@@ -106,7 +108,43 @@ jobs:
             throw new Error('npm pack returned unexpected CLI artifact metadata');
           }
           NODE
+      - name: Verify an existing release or mark the version absent
+        id: registry_state
+        env:
+          CLI_PACK_JSON: ${{ runner.temp }}/cli-pack.json
+          RELEASE_PACKAGE: '@lemonize/cli'
+          RELEASE_REPOSITORY: https://github.com/${{ github.repository }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_WORKFLOW: .github/workflows/release-cli.yml
+        run: |
+          set -euo pipefail
+          version=${RELEASE_TAG#cli-v}
+          registry_status=$(curl --silent --show-error \
+            --retry 3 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 10 --max-time 30 \
+            --proto '=https' \
+            --header 'Accept: application/json' \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            "https://registry.npmjs.org/%40lemonize%2Fcli/$version")
+          case "$registry_status" in
+            200)
+              RELEASE_VERSION="$version" node scripts/ops/verify-npm-release.mjs
+              state=existing
+              ;;
+            404)
+              state=missing
+              ;;
+            *)
+              echo "npm registry version probe failed with HTTP $registry_status" >&2
+              exit 1
+              ;;
+          esac
+          printf 'value=%s\n' "$state" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.registry_state.outputs.value == 'missing'
         with:
           name: cli-package-${{ github.sha }}
           path: ${{ runner.temp }}/cli-package/*.tgz
@@ -114,8 +152,28 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  publish:
+  validate_registry_state:
     needs: package
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require an exact package-job registry state
+        env:
+          REGISTRY_STATE: ${{ needs.package.outputs.registry_state }}
+        run: |
+          case "$REGISTRY_STATE" in
+            existing | missing) ;;
+            *)
+              echo "Invalid package-job registry state: $REGISTRY_STATE" >&2
+              exit 1
+              ;;
+          esac
+
+  publish:
+    needs: [package, validate_registry_state]
+    # A verified immutable release needs no OIDC authority. The validator
+    # fails empty, invalid, or case-variant state before approval is asked.
+    if: needs.validate_registry_state.result == 'success' && needs.package.outputs.registry_state == 'missing'
     runs-on: ubuntu-latest
     # This environment intentionally has no Cloudflare, Vercel, Clerk, or
     # Appwrite secrets. Its only authority comes from npm's exact OIDC binding.
@@ -137,9 +195,11 @@ jobs:
           digest-mismatch: error
       - name: Publish or verify @lemonize/cli with npm trusted publishing
         env:
+          REGISTRY_STATE: ${{ needs.package.outputs.registry_state }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          test "$REGISTRY_STATE" = 'missing'
           version=${RELEASE_TAG#cli-v}
           shopt -s nullglob
           tarballs=("$RUNNER_TEMP/cli-package"/*.tgz)
@@ -157,12 +217,24 @@ jobs:
             throw new Error('CLI tarball identity does not match the release tag');
           }
           NODE
-          if published=$(npm view "@lemonize/cli@$version" version 2>/dev/null); then
-            test "$published" = "$version" || exit 1
-            attestations=$(npm view "@lemonize/cli@$version" dist.attestations --json)
-            node -e \
-              'const value = JSON.parse(process.argv[1]); if (!value || typeof value.url !== "string" || typeof value.provenance?.predicateType !== "string") { throw new Error("Published CLI release is missing npm provenance"); }' \
-              "$attestations"
-          else
-            npm publish "$tarball" --ignore-scripts --access public --provenance
-          fi
+          registry_status=$(curl --silent --show-error \
+            --retry 3 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 10 --max-time 30 \
+            --proto '=https' \
+            --header 'Accept: application/json' \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            "https://registry.npmjs.org/%40lemonize%2Fcli/$version")
+          case "$registry_status" in
+            404)
+              npm publish "$tarball" --ignore-scripts --access public --provenance
+              ;;
+            200)
+              echo "Release appeared after package verification; refusing an unverified retry" >&2
+              exit 1
+              ;;
+            *)
+              echo "npm registry version probe failed with HTTP $registry_status" >&2
+              exit 1
+              ;;
+          esac
