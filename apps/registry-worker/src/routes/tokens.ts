@@ -15,6 +15,16 @@ import type { RegistryAppwriteRepository } from '../lib/appwrite-repository.js';
 
 export const tokens = new Hono<AppBindings>();
 
+export function filterActiveTokenRows(
+  rows: RegistryRow<'api_tokens'>[],
+  now = Date.now(),
+): RegistryRow<'api_tokens'>[] {
+  return rows.filter((row) => {
+    const expiresAt = Date.parse(row.expiresAt);
+    return !row.revokedAt && Number.isFinite(expiresAt) && expiresAt > now;
+  });
+}
+
 async function revokeRow(
   c: Context<AppBindings>,
   repo: RegistryAppwriteRepository,
@@ -91,7 +101,9 @@ tokens.get('/tokens', requireAuth, requireTokenManager, async (c) => {
   const userId = c.get('userId')!;
   let tokenRows: RegistryRow<'api_tokens'>[];
   if (c.get('authType') === 'clerk') {
-    tokenRows = (await repo.listTokensByUser(userId, { activeOnly: true })).rows;
+    tokenRows = filterActiveTokenRows(
+      (await repo.listTokensByUser(userId, { activeOnly: true })).rows,
+    );
   } else {
     const callerTokenId = c.get('tokenId');
     const callerRootTokenId = c.get('tokenRootId');
@@ -103,10 +115,8 @@ tokens.get('/tokens', requireAuth, requireTokenManager, async (c) => {
       repo.tokens.getOrNull(callerTokenId),
     ]);
     const manageable = new Map<string, RegistryRow<'api_tokens'>>();
-    for (const row of [...lineage.rows, ...(self ? [self] : [])]) {
+    for (const row of filterActiveTokenRows([...lineage.rows, ...(self ? [self] : [])])) {
       if (
-        !row.revokedAt &&
-        Date.parse(row.expiresAt) > Date.now() &&
         apiTokenCanManageTarget({
           callerTokenId,
           callerRootTokenId,

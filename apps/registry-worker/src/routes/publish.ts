@@ -34,7 +34,10 @@ import type { RegistryAppwriteRepository } from '../lib/appwrite-repository.js';
 import { globalArtifactQuotaUsage, publisherQuotaUsage } from '../lib/publisher-usage.js';
 import { canonicalStoredManifest } from '../lib/manifest-json.js';
 import { listExpiredReservationCandidates } from '../lib/reservation-cleanup.js';
-import { rejectInvalidStagedManifest } from '../lib/staging-lifecycle.js';
+import {
+  rejectInvalidStagedManifest,
+  type InvalidManifestRejectionResult,
+} from '../lib/staging-lifecycle.js';
 import {
   assertPublishingIdentity,
   assertGlobalArtifactQuota,
@@ -92,6 +95,24 @@ class ManifestPreparationError extends Error {
     super('Stored manifest is invalid.');
     this.name = 'ManifestPreparationError';
   }
+}
+
+function reportIncompleteManifestRejection(
+  source: 'scheduled_retry' | 'publish_finalize' | 'scanner_result',
+  result: InvalidManifestRejectionResult,
+  jobId: string,
+  versionId: string,
+): void {
+  if (result.complete) return;
+  // Never log provider errors or object keys; operation labels and row IDs are
+  // sufficient to alert operators without leaking credentials or package data.
+  console.error('Invalid-manifest rejection is incomplete.', {
+    source,
+    jobId,
+    versionId,
+    failedOperations: result.failedOperations,
+    stagingDeleted: result.stagingDeleted,
+  });
 }
 
 function actor(c: Context<AppBindings>): { userId: string; namespace: string } {
@@ -340,7 +361,15 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
   for (const job of jobs.rows.slice(0, Math.max(0, Math.min(limit, 10)))) {
     if (!['pending', 'retry', 'dispatching', 'queued', 'running'].includes(job.status)) continue;
     const version = await repo.versions.getOrNull(job.versionId);
-    if (!version || !['scanning', 'published'].includes(version.status)) continue;
+    const incompleteInvalidManifestRejection =
+      version?.status === 'rejected' && version.scanError === 'invalid_manifest';
+    if (
+      !version ||
+      (!['scanning', 'published'].includes(version.status) &&
+        !incompleteInvalidManifestRejection)
+    ) {
+      continue;
+    }
     const pkg = await repo.packages.getOrNull(version.packageId);
     if (!pkg) continue;
     if (version.status === 'published') {
@@ -368,6 +397,23 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
       }
       continue;
     }
+    if (incompleteInvalidManifestRejection) {
+      const reservation = await repo.getReservation(version.packageId, version.version);
+      const rejection = await rejectInvalidStagedManifest({
+        bucket: env.BUCKET,
+        repo,
+        job,
+        version,
+        reservation,
+      });
+      reportIncompleteManifestRejection(
+        'scheduled_retry',
+        rejection,
+        job.$id,
+        version.$id,
+      );
+      continue;
+    }
     if (job.attempts >= 3) {
       await repo.failScanJob(job.$id, job.attempts, 'scan_result_timeout', null);
       await repo.versions.update(version.$id, {
@@ -384,13 +430,19 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
     } catch (error) {
       if (!(error instanceof ManifestPreparationError)) throw error;
       const reservation = await repo.getReservation(version.packageId, version.version);
-      await rejectInvalidStagedManifest({
+      const rejection = await rejectInvalidStagedManifest({
         bucket: env.BUCKET,
         repo,
         job,
         version,
         reservation,
       });
+      reportIncompleteManifestRejection(
+        'scheduled_retry',
+        rejection,
+        job.$id,
+        version.$id,
+      );
       continue;
     }
     let accepted = false;
@@ -1124,13 +1176,19 @@ publish.post(
       payload = await scanPayload(job.$id, version, pkg);
     } catch (error) {
       if (!(error instanceof ManifestPreparationError)) throw error;
-      await rejectInvalidStagedManifest({
+      const rejection = await rejectInvalidStagedManifest({
         bucket: c.env.BUCKET,
         repo,
         job,
         version,
         reservation,
       });
+      reportIncompleteManifestRejection(
+        'publish_finalize',
+        rejection,
+        job.$id,
+        version.$id,
+      );
       throw new LemonizeError(
         422,
         ErrorCodes.VALIDATION_FAILED,
@@ -1342,13 +1400,19 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
     declaredManifestHash = await declaredManifestSha256(version.manifest);
   } catch (error) {
     if (!(error instanceof ManifestPreparationError)) throw error;
-    await rejectInvalidStagedManifest({
+    const rejection = await rejectInvalidStagedManifest({
       bucket: c.env.BUCKET,
       repo,
       job,
       version,
       reservation,
     });
+    reportIncompleteManifestRejection(
+      'scanner_result',
+      rejection,
+      job.$id,
+      version.$id,
+    );
     return c.json({ ok: true, status: 'rejected' });
   }
 

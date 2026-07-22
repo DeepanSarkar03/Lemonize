@@ -6,6 +6,7 @@ import {
   createApiToken,
   revokeApiTokenLineage,
 } from '../src/lib/api-token.js';
+import { filterActiveTokenRows } from '../src/routes/tokens.js';
 import type { RegistryAppwriteRepository } from '../src/lib/appwrite-repository.js';
 import type { ApiTokenData, RegistryRow } from '../src/lib/appwrite-types.js';
 
@@ -85,6 +86,18 @@ function fakeRepository(initialRows: RegistryRow<'api_tokens'>[] = []) {
 }
 
 describe('API token delegation security', () => {
+  it('omits expired rows from token listings even when Appwrite reports them active', () => {
+    const active = tokenRow('active', { expiresAt: '2026-07-24T12:00:00.000Z' });
+    const expired = tokenRow('expired', { expiresAt: '2026-07-23T12:00:00.000Z' });
+    const malformed = tokenRow('malformed', { expiresAt: 'not-a-date' });
+    const revoked = tokenRow('revoked', {
+      expiresAt: '2026-07-24T12:00:00.000Z',
+      revokedAt: '2026-07-23T11:00:00.000Z',
+    });
+
+    expect(filterActiveTokenRows([active, expired, malformed, revoked], NOW)).toEqual([active]);
+  });
+
   it('links API-created credentials to their root and caps scopes and expiry', async () => {
     const parentExpiry = new Date(Date.now() + 2 * 86_400_000).toISOString();
     const { repo, create } = fakeRepository();
