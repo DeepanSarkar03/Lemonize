@@ -7,10 +7,11 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { create, Header } from 'tar';
+import { create, Header, Pax } from 'tar';
 import { packDirectory } from '../src/pack.js';
 import { extractTarball } from '../src/extract.js';
 
@@ -48,6 +49,26 @@ function rawTarOf(entries: Array<[path: string, content: string]>): Uint8Array {
   }
   chunks.push(Buffer.alloc(1024));
   return new Uint8Array(gzipSync(Buffer.concat(chunks)));
+}
+
+function paxTarOf(path: string, content: string): Uint8Array {
+  const data = Buffer.from(content);
+  const pax = new Pax({ path, size: data.length, mtime: new Date(0) }).encode();
+  const header = new Header({
+    path: 'pax-entry',
+    type: 'File',
+    mode: 0o644,
+    uid: 0,
+    gid: 0,
+    size: data.length,
+    mtime: new Date(0),
+  });
+  const headerBlock = Buffer.alloc(512);
+  if (header.encode(headerBlock)) throw new Error('Fallback tar path unexpectedly requires PAX.');
+  const padding = Buffer.alloc((512 - (data.length % 512)) % 512);
+  return new Uint8Array(
+    gzipSync(Buffer.concat([pax, headerBlock, data, padding, Buffer.alloc(1024)])),
+  );
 }
 
 describe('pack + extract round-trip', () => {
@@ -128,6 +149,60 @@ describe('extract rejects malicious / malformed archives', () => {
 
     await expect(extractTarball(evil, dest)).rejects.toThrow(/symlink/);
     expect(existsSync(join(outside, 'escape.txt'))).toBe(false);
+  });
+
+  it('handles an excessively deep PAX path without crashing the process', () => {
+    // GHSA-r292-9mhp-454m: tar <=7.5.20 could recurse without a bound while
+    // filtering an archive entry by filename. Keep the pathological parse in a
+    // child process so a regression can fail this test without taking down the
+    // Vitest worker itself.
+    const work = tmp();
+    const archivePath = join(work, 'deep-path.tgz');
+    const dest = join(work, 'out');
+    const deepPath = `package/${Array.from({ length: 12_000 }, () => 'd').join('/')}/payload.txt`;
+    writeFileSync(archivePath, paxTarOf(deepPath, 'payload'));
+
+    const extractorUrl = new URL('../src/extract.ts', import.meta.url).href;
+    const childScript = `
+      import { readFile } from 'node:fs/promises';
+      import { Readable } from 'node:stream';
+      import { list } from 'tar';
+      import { extractTarball } from ${JSON.stringify(extractorUrl)};
+
+      const tarball = await readFile(process.argv[1]);
+      await new Promise((resolve, reject) => {
+        const parser = list({ preservePaths: true }, ['package/package.json']);
+        parser.once('end', resolve);
+        parser.once('error', reject);
+        Readable.from(tarball).once('error', reject).pipe(parser);
+      });
+      console.log('filtered-list-complete');
+
+      try {
+        await extractTarball(tarball, process.argv[2]);
+        throw new Error('Pathological archive was unexpectedly accepted.');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes('does not contain package/package.json')) throw error;
+      }
+      console.log('controlled-extract-rejection');
+    `;
+    const child = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', '--eval', childScript, archivePath, dest],
+      {
+        encoding: 'utf8',
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+      },
+    );
+
+    expect(child.error).toBeUndefined();
+    expect(child.signal).toBeNull();
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toContain('filtered-list-complete');
+    expect(child.stdout).toContain('controlled-extract-rejection');
   });
 });
 
