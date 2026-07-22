@@ -7,6 +7,7 @@ import { ClerkProvider } from '@clerk/nextjs';
 import Link from 'next/link';
 import { Nav } from '@/components/Nav';
 import { BrandMark } from '@/components/BrandMark';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 
 const editorial = Newsreader({
   subsets: ['latin'],
@@ -107,6 +108,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
           </footer>
+          <SpeedInsights />
         </body>
       </html>
     </ClerkProvider>
