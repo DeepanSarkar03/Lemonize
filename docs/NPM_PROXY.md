@@ -32,6 +32,7 @@ The proxy deliberately implements a small allowlist needed for public installs:
 | `GET`, `HEAD` | `/:package/-/:file.tgz`              | Public npm tarball, including a single byte Range                    |
 | `GET`, `HEAD` | `/-/v1/search`                       | Bounded npm search query                                             |
 | `GET`, `HEAD` | `/-/ping`                            | npm registry ping; `?write=true` is never cached                     |
+| `GET`, `HEAD` | `/-/npm/v1/keys`                     | Public npm registry signing keys; bounded and cached for one day     |
 | `POST`        | `/-/npm/v1/security/advisories/bulk` | Bounded, uncached audit request                                      |
 | `POST`        | `/-/npm/v1/security/audits/quick`    | Bounded, uncached audit request                                      |
 
@@ -49,14 +50,14 @@ Official npmjs tarball URLs therefore stay on the Lemonize hostname in both free
 
 ## Cache, Range, and integrity behavior
 
-- Full and abbreviated packuments use separate cache keys and successful metadata is cached for at most five minutes.
+- Full and abbreviated packuments use separate cache keys and successful metadata is cached for at most five minutes. The small public signing-key document is cached for one day to keep signature verification available without repeatedly consuming npmjs or Worker origin budget.
 - Missing (`404`/`410`) metadata and tarballs are cached for at most one minute. Other errors are not cached.
 - Complete tarball responses are cached as immutable objects for one year. A Range request can be satisfied from an already cached complete object; an origin Range miss is streamed and is not inserted as a partial cached object. Conditional requests bypass cache lookup.
 - npm's SHA-512 `dist.integrity` and SHA-1 `dist.shasum` fields are preserved. Tarballs are never repacked or recompressed.
 - `X-Lemonize-Cache: HIT | MISS | BYPASS` describes Lemonize's Cache API decision, not npmjs's cache.
 - The launch target is warm-cache P95 time-to-first-byte below 500 ms. A cold miss still depends on npmjs and has no latency guarantee.
 
-Limits are 16 MiB per packument, 100 MiB per tarball, 4 MiB per search response, 1 MiB per audit request, and 8 MiB per audit response. Metadata/audit origin work has a 10-second timeout; tarballs have a 30-second timeout.
+Limits are 16 MiB per packument, 100 MiB per tarball, 4 MiB per search response, 64 KiB per signing-key response, 1 MiB per audit request, and 8 MiB per audit response. Metadata/audit origin work has a 10-second timeout; tarballs have a 30-second timeout.
 
 ## Origin admission and WAF
 
@@ -66,7 +67,7 @@ Each per-client Durable Object schedules deletion just after its UTC daily windo
 
 The checked-in per-client route defaults are metadata `400/minute` and `2,000/day`, search `5/minute` and `100/day`, audit `4/minute` and `100/day`, and tarball `400/minute` and `2,500/day`. Each `NPM_ORIGIN_CLIENT_*` value must remain strictly below its corresponding global route budget or admission fails closed. These conservative budgets may be lowered without changing the public API. They protect npmjs and free-tier origin traffic; they do not cap requests that terminate at the Worker or replace Cloudflare account-level usage monitoring.
 
-Before production enablement, configure Cloudflare WAF/rate-limiting rules for `npm.lemonize.cyou` to block malformed or abusive traffic before Worker execution, exempt only the supported methods/routes, and verify normal npm, pnpm, Yarn, audit, HEAD, and Range traffic is not challenged. WAF configuration is provider-side and is not created by `wrangler.jsonc`; its rule IDs and a passing test record belong in the deployment evidence.
+Before production enablement, configure Cloudflare WAF/rate-limiting rules for `npm.lemonize.cyou` to block malformed or abusive traffic before Worker execution, exempt only the supported methods/routes, and verify normal npm, pnpm, Yarn, audit, signature verification, HEAD, and Range traffic is not challenged. WAF configuration is provider-side and is not created by `wrangler.jsonc`; its rule IDs and a passing test record belong in the deployment evidence.
 
 The minimum provider-side policy is:
 

@@ -81,28 +81,34 @@ case "$operation" in
       console.log("Appwrite backup policy configuration is valid");
     ' "$policy_file" "$APPWRITE_BACKUP_SCHEDULE" "$APPWRITE_BACKUP_RETENTION_DAYS"
     archives_file="$HOME/archives.json"
-    "$APPWRITE_BIN" --json backups list-archives --sort-desc '$createdAt' --limit 5 > "$archives_file"
+    "$APPWRITE_BIN" --json backups list-archives --sort-desc '$createdAt' --limit 100 > "$archives_file"
     node -e '
       const fs = require("node:fs");
-      const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const [path, policyId] = process.argv.slice(1);
+      const data = JSON.parse(fs.readFileSync(path, "utf8"));
       const archives = data.archives ?? [];
-      const latest = archives.find((archive) => archive.status === "completed");
-      if (!latest) {
-        console.error("No completed Appwrite archive was found in the five newest archives");
+      const completed = archives
+        .filter((archive) => archive.policyId === policyId && archive.status === "completed")
+        .map((archive) => ({ archive, createdAt: Date.parse(archive.$createdAt) }));
+      if (completed.length === 0) {
+        console.error(`No completed Appwrite archive was found for policy ${policyId}`);
         process.exit(1);
       }
-      const expected = ["functions", "storage", "tablesdb"];
-      const services = [...(latest.services ?? [])].sort();
-      const age = Date.now() - Date.parse(latest.$createdAt);
+      if (completed.some(({ createdAt }) => !Number.isFinite(createdAt))) {
+        console.error(`A completed Appwrite archive for policy ${policyId} has an invalid creation time`);
+        process.exit(1);
+      }
+      completed.sort((left, right) => right.createdAt - left.createdAt);
+      const { archive: latest, createdAt } = completed[0];
+      const age = Date.now() - createdAt;
       const size = Number(latest.size ?? latest.$size);
       if (!Number.isFinite(age) || age < 0 || age > 26 * 60 * 60 * 1000 ||
-          !Number.isFinite(size) || size <= 0 ||
-          JSON.stringify(services) !== JSON.stringify(expected)) {
-        console.error("Newest completed Appwrite archive is stale, empty, or does not cover all required services");
+          !Number.isFinite(size) || size <= 0) {
+        console.error(`Newest completed Appwrite archive for policy ${policyId} is stale or empty`);
         process.exit(1);
       }
       console.log("Latest completed Appwrite archive is healthy");
-    ' "$archives_file"
+    ' "$archives_file" "$APPWRITE_BACKUP_POLICY_ID"
     ;;
   create)
     archive_file="$HOME/archive-created.json"

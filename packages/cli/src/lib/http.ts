@@ -1,4 +1,5 @@
 import { validateRegistryUrl } from './config.js';
+import { CLI_VERSION } from '../version.js';
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_RESOURCE_REDIRECTS = 5;
@@ -75,7 +76,7 @@ export async function fetchPackageResource(
 
   for (let redirectCount = 0; redirectCount <= MAX_RESOURCE_REDIRECTS; redirectCount += 1) {
     assertSecureResourceUrl(url);
-    const headers = new Headers({ 'user-agent': 'lem-cli/0.1.0' });
+    const headers = new Headers({ 'user-agent': `lem-cli/${CLI_VERSION}` });
     if (includeAuthorization && token) headers.set('authorization', `Bearer ${token}`);
 
     const response = await globalThis.fetch(url, {

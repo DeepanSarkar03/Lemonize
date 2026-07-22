@@ -4,8 +4,10 @@ export const PUBLIC_ORIGIN = 'https://npm.lemonize.cyou';
 export const MAX_PACKUMENT_BYTES = 16 * 1024 * 1024;
 export const MAX_AUDIT_BYTES = 1024 * 1024;
 export const MAX_TARBALL_BYTES = 100 * 1024 * 1024;
+export const MAX_SIGNING_KEYS_BYTES = 64 * 1024;
 
 export const METADATA_TTL_SECONDS = 300;
+export const SIGNING_KEYS_TTL_SECONDS = 24 * 60 * 60;
 export const NEGATIVE_TTL_SECONDS = 60;
 
 const CORGI_MEDIA_TYPE = 'application/vnd.npm.install-v1+json';
@@ -16,7 +18,8 @@ const TARBALL_FILE = /^[A-Za-z0-9._~!$&'*()+,;=@%-]+\.tgz$/;
 export type MetadataRoute =
   | { kind: 'packument'; packageName: string }
   | { kind: 'search' }
-  | { kind: 'ping' };
+  | { kind: 'ping' }
+  | { kind: 'signing-keys' };
 
 export type AuditRoute = { kind: 'audit-bulk' } | { kind: 'audit-quick' };
 
@@ -67,6 +70,7 @@ export function isValidPackageName(value: string): boolean {
 export function classifyPath(pathname: string): NpmRoute | null {
   if (pathname === '/-/v1/search') return { kind: 'search' };
   if (pathname === '/-/ping') return { kind: 'ping' };
+  if (pathname === '/-/npm/v1/keys') return { kind: 'signing-keys' };
   if (pathname === '/-/npm/v1/security/advisories/bulk') return { kind: 'audit-bulk' };
   if (pathname === '/-/npm/v1/security/audits/quick') return { kind: 'audit-quick' };
   if (pathname === '/' || pathname.length > 2048) return null;

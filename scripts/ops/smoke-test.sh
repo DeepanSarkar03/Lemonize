@@ -18,7 +18,8 @@ ready_file=$(mktemp)
 metadata_file=$(mktemp)
 web_file=$(mktemp)
 npm_file=$(mktemp)
-trap 'rm -f "$ready_file" "$metadata_file" "$web_file" "$npm_file"' EXIT
+npm_keys_file=$(mktemp)
+trap 'rm -f "$ready_file" "$metadata_file" "$web_file" "$npm_file" "$npm_keys_file"' EXIT
 
 curl --fail --silent --show-error --location \
   --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 \
@@ -81,6 +82,22 @@ for (const version of Object.values(body.versions)) {
   if (typeof tarball !== 'string' || !tarball.startsWith(`${proxy}/`)) {
     throw new Error(`npm proxy returned an off-proxy tarball URL: ${tarball}`);
   }
+}
+NODE
+
+curl --fail --silent --show-error \
+  --retry 4 --retry-delay 2 --retry-all-errors --connect-timeout 10 --max-time 30 \
+  "${NPM_PROXY_SMOKE_URL%/}/-/npm/v1/keys" > "$npm_keys_file"
+
+node - "$npm_keys_file" <<'NODE'
+const { readFileSync } = require('node:fs');
+const body = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+if (
+  !Array.isArray(body.keys) ||
+  body.keys.length === 0 ||
+  body.keys.some((key) => typeof key?.keyid !== 'string' || typeof key?.key !== 'string')
+) {
+  throw new Error('npm proxy did not return a valid signing-key document');
 }
 NODE
 

@@ -2,13 +2,14 @@ import { Command } from 'commander';
 import { configureLogger, log } from './lib/logger.js';
 import { ApiClientError } from '@lemonize/shared';
 import * as cmd from './commands.js';
+import { CLI_VERSION } from './version.js';
 
 const program = new Command();
 
 program
   .name('lem')
   .description('Lemonize — publish, install and run JavaScript/TypeScript packages.')
-  .version('0.1.0')
+  .version(CLI_VERSION)
   .option('--registry <url>', 'registry URL override')
   .option('--json', 'machine-readable JSON output', false)
   .option('--verbose', 'verbose logging', false)

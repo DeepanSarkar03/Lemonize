@@ -1,0 +1,263 @@
+name: Deploy npm proxy
+
+run-name: Deploy npm proxy to ${{ inputs.environment }} @ ${{ inputs.git_ref }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Protected GitHub environment to deploy
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      git_ref:
+        description: Full 40-character commit SHA that passed CI
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: npm-proxy-deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  CI: 'true'
+  PNPM_VERSION: 11.13.1
+  NODE_VERSION: 24
+
+jobs:
+  preflight:
+    name: Revalidate immutable npm proxy candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate deployment request
+        env:
+          REQUESTED_SHA: ${{ inputs.git_ref }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$WORKFLOW_REF" != refs/heads/main ]]; then
+            echo "The protected npm proxy workflow must run from main" >&2
+            exit 1
+          fi
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "git_ref must be a full 40-character commit SHA" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.git_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a main-reachable immutable commit
+        env:
+          REQUESTED_SHA: ${{ inputs.git_ref }}
+        run: |
+          set -euo pipefail
+          requested_sha=${REQUESTED_SHA,,}
+          test "$(git rev-parse HEAD)" = "$requested_sha"
+          git show-ref --verify --quiet refs/remotes/origin/main || {
+            echo "origin/main was not fetched by the immutable checkout" >&2
+            exit 1
+          }
+          git merge-base --is-ancestor "$requested_sha" refs/remotes/origin/main || {
+            echo "npm proxy deployment SHA must be reachable from origin/main" >&2
+            exit 1
+          }
+
+      - name: Require successful CI for the exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ inputs.git_ref }}
+        run: |
+          set -euo pipefail
+          requested_sha=${REQUESTED_SHA,,}
+          required_checks=(
+            'Frozen install, lint, typecheck, build, test'
+            'Audit production dependencies (high/critical)'
+            'Audit development dependencies (high/critical)'
+            'Secret scan (full history)'
+            'Worker dry-run and web build'
+            'Artifact integrity, extraction, and CLI security tests'
+          )
+          for check_name in "${required_checks[@]}"; do
+            successful=$(gh api \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "repos/${GITHUB_REPOSITORY}/commits/${requested_sha}/check-runs?per_page=100" \
+              --jq "[.check_runs[] | select(.name == \"$check_name\" and .conclusion == \"success\")] | length")
+            test "$successful" -ge 1 || {
+              echo "Required CI check has not passed for $requested_sha: $check_name" >&2
+              exit 1
+            }
+          done
+
+  deploy:
+    name: Deploy ${{ inputs.environment }} npm proxy
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.git_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify immutable checkout
+        env:
+          REQUESTED_SHA: ${{ inputs.git_ref }}
+        run: test "$(git rev-parse HEAD)" = "${REQUESTED_SHA,,}"
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install locked npm proxy dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy npm proxy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          bash scripts/ops/require-env.sh \
+            CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DEPLOY_ENV
+          pnpm --filter @lemonize/npm-proxy-worker exec wrangler deploy \
+            --env "$DEPLOY_ENV"
+
+      - name: Smoke test npm proxy
+        env:
+          DEPLOY_ENV: ${{ inputs.environment }}
+          NPM_PROXY_BASE_URL: ${{ vars.NPM_PROXY_BASE_URL }}
+        run: |
+          set -euo pipefail
+          bash scripts/ops/require-env.sh DEPLOY_ENV NPM_PROXY_BASE_URL
+
+          case "$DEPLOY_ENV" in
+            staging) expected_origin='https://npm-staging.lemonize.cyou' ;;
+            production) expected_origin='https://npm.lemonize.cyou' ;;
+            *) echo "Unsupported deployment environment: $DEPLOY_ENV" >&2; exit 1 ;;
+          esac
+          proxy_origin=${NPM_PROXY_BASE_URL%/}
+          if [[ "$proxy_origin" != "$expected_origin" ]]; then
+            echo "NPM_PROXY_BASE_URL does not match the protected $DEPLOY_ENV target" >&2
+            exit 1
+          fi
+
+          smoke_dir=$(mktemp -d)
+          trap 'rm -rf -- "$smoke_dir"' EXIT
+          ping_file="$smoke_dir/ping.json"
+          keys_file="$smoke_dir/keys.json"
+          packument_file="$smoke_dir/cli-packument.json"
+          tarball_file="$smoke_dir/cli.tgz"
+
+          curl_retry() {
+            curl --fail --silent --show-error --location \
+              --retry 8 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 10 --max-time 60 "$@"
+          }
+
+          curl_retry "$proxy_origin/-/ping" > "$ping_file"
+          node - "$ping_file" <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const body = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            throw new Error('npm proxy ping did not return a JSON object');
+          }
+          NODE
+
+          curl_retry "$proxy_origin/-/npm/v1/keys" > "$keys_file"
+          node - "$keys_file" <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const body = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          if (
+            !Array.isArray(body.keys) ||
+            body.keys.length === 0 ||
+            body.keys.some((key) => typeof key?.keyid !== 'string' || typeof key?.key !== 'string')
+          ) {
+            throw new Error('npm proxy signing-key response is invalid');
+          }
+          NODE
+
+          curl_retry \
+            -H 'Accept: application/vnd.npm.install-v1+json' \
+            "$proxy_origin/@lemonize%2Fcli" > "$packument_file"
+          mapfile -t package_release < <(node - "$packument_file" "$proxy_origin" <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const body = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          const proxyOrigin = new URL(process.argv[3]).origin;
+          const version = body['dist-tags']?.latest;
+          const release = typeof version === 'string' ? body.versions?.[version] : undefined;
+          const tarball = release?.dist?.tarball;
+          if (body.name !== '@lemonize/cli' || !release || typeof tarball !== 'string') {
+            throw new Error('npm proxy returned an invalid @lemonize/cli packument');
+          }
+          const tarballUrl = new URL(tarball);
+          if (
+            tarballUrl.origin !== proxyOrigin ||
+            tarballUrl.username ||
+            tarballUrl.password ||
+            !tarballUrl.pathname.endsWith('.tgz')
+          ) {
+            throw new Error(`npm proxy returned an invalid tarball URL: ${tarball}`);
+          }
+          process.stdout.write(`${version}\n${tarballUrl.href}\n`);
+          NODE
+          )
+          latest_version=${package_release[0]:-}
+          tarball_url=${package_release[1]:-}
+          test -n "$latest_version"
+          test -n "$tarball_url"
+
+          curl_retry "$tarball_url" > "$tarball_file"
+          test -s "$tarball_file"
+
+          install_dir="$smoke_dir/install"
+          mkdir -p "$install_dir"
+          printf 'registry=%s/\n@lemonize:registry=%s/\nalways-auth=false\n' \
+            "$proxy_origin" "$proxy_origin" > "$smoke_dir/npmrc"
+          NPM_CONFIG_USERCONFIG="$smoke_dir/npmrc" \
+          npm install \
+            --prefix "$install_dir" \
+            --cache "$smoke_dir/npm-cache" \
+            --registry "$proxy_origin/" \
+            --ignore-scripts --no-audit --no-fund \
+            '@lemonize/cli@latest'
+          node - "$install_dir/node_modules/@lemonize/cli/package.json" "$latest_version" <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const manifest = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          if (manifest.name !== '@lemonize/cli' || manifest.version !== process.argv[3]) {
+            throw new Error('npm did not install the expected @lemonize/cli release through the proxy');
+          }
+          NODE
+          (
+            cd "$install_dir"
+            NPM_CONFIG_USERCONFIG="$smoke_dir/npmrc" \
+              npm audit signatures --registry "$proxy_origin/"
+          )
+
+          {
+            echo "### npm proxy deployment completed"
+            echo "- Environment: $DEPLOY_ENV"
+            echo "- Commit: ${{ inputs.git_ref }}"
+            echo "- Origin: $proxy_origin"
+            echo "- Installed @lemonize/cli@$latest_version through the proxy"
+          } >> "$GITHUB_STEP_SUMMARY"
