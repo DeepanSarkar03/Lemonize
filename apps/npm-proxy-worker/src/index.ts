@@ -1,9 +1,5 @@
 import { Hono } from 'hono';
-import type {
-  AdmissionCandidate,
-  AdmissionDecision,
-  AdmissionEnv,
-} from './admission.js';
+import type { AdmissionCandidate, AdmissionDecision, AdmissionEnv } from './admission.js';
 import {
   handleProxyRequest,
   METADATA_AUDIT_TIMEOUT_MS,
@@ -36,12 +32,41 @@ function isAdmissionDecision(value: unknown): value is AdmissionDecision {
   }
   if (decision.allowed) return decision.retryAfterSeconds === 0;
   return (
+    decision.reason === 'client_route_minute' ||
+    decision.reason === 'client_route_day' ||
     decision.reason === 'per_ip_minute' ||
     decision.reason === 'global_minute' ||
     decision.reason === 'global_day' ||
     decision.reason === 'route_minute' ||
     decision.reason === 'route_day'
   );
+}
+
+async function requestAdmissionDecision(
+  namespace: DurableObjectNamespace,
+  objectName: string,
+  endpoint: '/admit-client' | '/admit',
+  candidate: AdmissionCandidate,
+  signal: AbortSignal,
+): Promise<AdmissionDecision> {
+  const id = namespace.idFromName(objectName);
+  const response = await namespace.get(id).fetch(
+    new Request(`https://npm-admission.internal${endpoint}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(candidate),
+      signal,
+    }),
+  );
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error('Npm admission controller rejected its internal request.');
+  }
+  const decision: unknown = await response.json();
+  if (!isAdmissionDecision(decision)) {
+    throw new Error('Npm admission controller returned an invalid decision.');
+  }
+  return decision;
 }
 
 async function requestAdmission(
@@ -53,24 +78,22 @@ async function requestAdmission(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort('admission timeout'), ADMISSION_TIMEOUT_MS);
   try {
-    const id = namespace.idFromName('npm-origin-global-v1');
-    const response = await namespace.get(id).fetch(
-      new Request('https://npm-admission.internal/admit', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(candidate),
-        signal: controller.signal,
-      }),
+    const clientDecision = await requestAdmissionDecision(
+      namespace,
+      `npm-origin-client-v1:${candidate.clientIpHash}`,
+      '/admit-client',
+      candidate,
+      controller.signal,
     );
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error('Npm admission controller rejected its internal request.');
-    }
-    const decision: unknown = await response.json();
-    if (!isAdmissionDecision(decision)) {
-      throw new Error('Npm admission controller returned an invalid decision.');
-    }
-    return decision;
+    if (!clientDecision.allowed) return clientDecision;
+
+    return requestAdmissionDecision(
+      namespace,
+      'npm-origin-global-v1',
+      '/admit',
+      candidate,
+      controller.signal,
+    );
   } finally {
     clearTimeout(timeout);
   }

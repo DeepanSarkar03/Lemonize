@@ -16,6 +16,11 @@ const editorial = Newsreader({
   variable: '--font-editorial',
 });
 
+// A per-request CSP nonce can only be attached to Next.js script tags during
+// dynamic rendering. Keep every page behind this layout dynamic so the nonce
+// in the response header always matches every executable framework script.
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   metadataBase: new URL('https://lemonize.cyou'),
   title: {
@@ -43,6 +48,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider
+      dynamic
       signInUrl="/login"
       afterSignOutUrl="/"
       appearance={{

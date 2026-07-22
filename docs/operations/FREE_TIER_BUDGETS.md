@@ -37,7 +37,7 @@ The npm proxy has no dedicated origin-storage bill because it uses only Cloudfla
 - free mode buffers and JSON-validates successful packuments through 256 KiB; larger packuments use bounded streaming replacement for exact official npm registry URL prefixes;
 - 16 MiB packuments, 100 MiB tarballs, 4 MiB search responses, 1 MiB audit requests, and 8 MiB audit responses are hard limits;
 - full tarballs can be cached; an origin Range miss is not stored as a partial object;
-- the `NPM_ADMISSION_CONTROLLER` Durable Object admits only cache misses and applies hashed per-IP, global minute/day, and route-specific budgets;
+- the `NPM_ADMISSION_CONTROLLER` Durable Object admits only cache misses, groups IPv6 privacy addresses by `/64`, applies per-client route minute/day limits before the shared per-IP, global minute/day, and route-specific budgets, and expires per-client ledgers with daily alarms;
 - hostname-scoped Cloudflare WAF/rate rules must reject abusive traffic before Worker execution because Durable Object admission cannot save Worker request quota;
 - if either Worker or Durable Object allowance approaches 90%, set `NPM_PROXY_ENABLED=false` or withdraw the npm hostname before reducing native registry availability.
 

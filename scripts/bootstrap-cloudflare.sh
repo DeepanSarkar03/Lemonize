@@ -98,8 +98,6 @@ Next steps:
   2. Set each environment's R2 binding to the matching bucket name.
   3. Provision separate Appwrite and Clerk resources; this script does not do so.
   4. Keep production REGISTRY_MODE=read_only and ALLOW_PUBLIC_PUBLISH=false.
-  5. Create CLI_R2_API_TOKEN separately as a protected release-only secret,
-     scoped only to writing CLI release objects in the production R2 bucket.
 
 Do not reuse dev/staging IDs or credentials in production.
 NEXT

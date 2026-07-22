@@ -112,6 +112,8 @@ export interface Vars {
   role?: RegistryRole;
   acceptedTermsVersion?: string | null;
   tokenId?: string;
+  tokenParentId?: string;
+  tokenRootId?: string;
   tokenScopes?: TokenScope[];
   tokenExpiresAt?: string;
   authType?: 'clerk' | 'api_token';

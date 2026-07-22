@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { manifestSchema } from '../src/schemas.js';
+import { jsonStructureIssue, MANIFEST_JSON_LIMITS } from '../src/json.js';
+import { manifestSchema, publishIntentSchema } from '../src/schemas.js';
 
 describe('manifest paths', () => {
   it('accepts package-relative entry points and directory file entries', () => {
@@ -46,5 +47,55 @@ describe('manifest paths', () => {
         manifestSchema.parse({ name: '@demo/pkg', version: '1.0.0', ...extra }),
       ).toThrow();
     }
+  });
+
+  it('rejects a depth-3000 extension iteratively without losing package.json extensibility', () => {
+    let extension: unknown = 'leaf';
+    for (let depth = 0; depth < 3_000; depth += 1) extension = { nested: extension };
+
+    const result = publishIntentSchema.safeParse({
+      manifest: {
+        name: '@demo/pkg',
+        version: '1.0.0',
+        customMetadata: extension,
+      },
+      integrity: `sha512-${'A'.repeat(86)}==`,
+      shasum: 'a'.repeat(64),
+      tarballSize: 1,
+      unpackedSize: 1,
+      fileCount: 1,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.message).toContain('depth');
+    expect(() =>
+      manifestSchema.parse({
+        name: '@demo/pkg',
+        version: '1.0.0',
+        customMetadata: { build: { channel: 'canary' } },
+      }),
+    ).not.toThrow();
+  });
+
+  it('enforces explicit aggregate node and object-key limits', () => {
+    expect(
+      jsonStructureIssue(
+        { customMetadata: Array.from({ length: MANIFEST_JSON_LIMITS.maxNodes }, () => null) },
+        MANIFEST_JSON_LIMITS,
+      ),
+    ).toBe('nodes');
+    expect(
+      jsonStructureIssue(
+        {
+          customMetadata: Object.fromEntries(
+            Array.from({ length: MANIFEST_JSON_LIMITS.maxKeys }, (_, index) => [
+              `key-${index}`,
+              true,
+            ]),
+          ),
+        },
+        MANIFEST_JSON_LIMITS,
+      ),
+    ).toBe('keys');
   });
 });

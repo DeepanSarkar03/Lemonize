@@ -180,10 +180,10 @@ export async function cmdTokenCreate(
   label: string,
   opts: GlobalOpts & { expiresInDays?: number; scopes?: string[] },
 ) {
-  const allowed = new Set<TokenScope>(['read', 'publish', 'manage:packages', 'manage:tokens']);
+  const allowed = new Set<TokenScope>(['read', 'publish', 'manage:packages']);
   const scopes = (opts.scopes ?? ['read', 'publish', 'manage:packages']) as TokenScope[];
   if (scopes.length === 0 || scopes.some((scope) => !allowed.has(scope))) {
-    throw new Error('Invalid token scope. Use read, publish, manage:packages, or manage:tokens.');
+    throw new Error('Invalid token scope. CLI-created tokens may use read, publish, or manage:packages.');
   }
   const expiresInDays = opts.expiresInDays ?? 30;
   if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 90) {

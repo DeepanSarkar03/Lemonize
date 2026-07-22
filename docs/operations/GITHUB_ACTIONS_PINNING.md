@@ -14,4 +14,4 @@ The action audit checklist is:
 
 New workflows may not introduce floating branches such as `main`, unversioned container tags, or unpinned global CLIs. Wrangler is resolved from the frozen workspace lockfile; Vercel, Appwrite CLI, and release Wrangler global installs use explicit versions.
 
-Pinning does not replace least privilege. Review each action's `permissions`, environment access, and secret exposure. In particular, `CLI_R2_API_TOKEN` is available only to the protected release publish job, while Appwrite deploy/runtime/backup keys stay separated and environment-specific.
+Pinning does not replace least privilege. Review each action's `permissions`, environment access, and secret exposure. Appwrite deploy/runtime/backup keys stay separated and environment-specific, while CLI publication uses short-lived npm OIDC rather than a long-lived package token.

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { jsonStructureIssue, MANIFEST_JSON_LIMITS } from './json.js';
 
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {
@@ -74,7 +75,16 @@ export const manifestSchema = z
       })
       .optional(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((manifest, context) => {
+    const issue = jsonStructureIssue(manifest, MANIFEST_JSON_LIMITS);
+    if (issue !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Manifest JSON exceeds the allowed ${issue.replace('_', ' ')} complexity.`,
+      });
+    }
+  });
 
 export const publishIntentSchema = z.object({
   manifest: manifestSchema,

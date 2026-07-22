@@ -140,11 +140,11 @@ ALLOW_PUBLIC_PUBLISH=false
 
 until the explicit cutover approval.
 
-## 9. Publish standalone CLI binaries
+## 9. Publish the CLI package
 
-Tags named `cli-vX.Y.Z` run the protected release workflow, build Linux/macOS x64 and arm64 plus Windows x64 binaries, publish `@lemonize/cli` through npm trusted publishing, and upload versioned binaries, checksums, and a final `latest.json` pointer to production R2. That workflow requires `CLI_R2_API_TOKEN`, a release-only Cloudflare token with the minimum provider-supported write access to the production CLI release bucket, plus `CLOUDFLARE_ACCOUNT_ID`. The exact GitHub repository/workflow must also be registered as the trusted publisher for the public npm package.
+Tags named `cli-vX.Y.Z` run the protected release workflow and publish `@lemonize/cli` through npm trusted publishing with provenance. The exact GitHub repository, workflow, and secret-free `npm-release` environment must be registered as the trusted publisher for the public npm package.
 
-Do not substitute the general Worker deployment token. The release credential is a current external blocker and must be provisioned before the install scripts can be advertised as a completed release path. npm owner authentication, the `@lemonize` organization/package, and the trusted-publisher binding are also absent; the currently signed-out npm CLI is not release evidence.
+Do not add a long-lived npm token. The npm owner, public package, and trusted-publisher binding must be verified before tagging a release.
 
 ## 10. Production cutover
 
@@ -156,7 +156,7 @@ Before enabling writes:
 4. confirm legacy unscoped packages are readable while new versions and non-admin maintenance are rejected;
 5. test Clerk login/device approval, token scopes/revocation, scanner clean/reject/error behavior, and immutable downloads in staging;
 6. verify a completed Appwrite backup and a tested restore, plus the separate R2 preservation evidence;
-7. complete production Clerk DNS/GitHub OAuth, deploy and resolve the npm proxy, verify its WAF/origin-admission controls, configure npm trusted publishing, and provision the release-only R2 credential;
+7. complete production Clerk DNS/GitHub OAuth, deploy and resolve the npm proxy, verify its WAF/origin-admission controls, and bind npm trusted publishing to the secret-free `npm-release` environment;
 8. obtain a separate production approval before changing the two read-only controls.
 
 If any check is unresolved, keep serving reads and leave publishing disabled.

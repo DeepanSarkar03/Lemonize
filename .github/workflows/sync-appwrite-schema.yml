@@ -1,0 +1,134 @@
+name: Sync Appwrite schema
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Protected Appwrite environment to update
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      git_ref:
+        description: Full 40-character commit SHA that passed CI
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: appwrite-schema-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 24
+  APPWRITE_CLI_VERSION: 22.6.1
+
+jobs:
+  preflight:
+    name: Revalidate immutable schema candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.git_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a main-reachable immutable commit
+        env:
+          REQUESTED_SHA: ${{ inputs.git_ref }}
+        run: |
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "git_ref must be a full 40-character commit SHA" >&2
+            exit 1
+          fi
+          test "$(git rev-parse HEAD)" = "${REQUESTED_SHA,,}"
+          git show-ref --verify --quiet refs/remotes/origin/main || {
+            echo "origin/main was not fetched by the immutable checkout" >&2
+            exit 1
+          }
+          git merge-base --is-ancestor "${REQUESTED_SHA,,}" refs/remotes/origin/main || {
+            echo "schema SHA must be reachable from origin/main" >&2
+            exit 1
+          }
+      - name: Require successful CI for the exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ inputs.git_ref }}
+        run: |
+          required_checks=(
+            'Frozen install, lint, typecheck, build, test'
+            'Audit production dependencies (high/critical)'
+            'Audit development dependencies (high/critical)'
+            'Secret scan (full history)'
+            'Worker dry-run and web build'
+            'Artifact integrity, extraction, and CLI security tests'
+          )
+          for check_name in "${required_checks[@]}"; do
+            successful=$(gh api \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "repos/${GITHUB_REPOSITORY}/commits/${REQUESTED_SHA}/check-runs?per_page=100" \
+              --jq "[.check_runs[] | select(.name == \"$check_name\" and .conclusion == \"success\")] | length")
+            test "$successful" -ge 1 || {
+              echo "Required CI check has not passed for $REQUESTED_SHA: $check_name" >&2
+              exit 1
+            }
+          done
+
+  sync:
+    name: Sync ${{ inputs.environment }} Appwrite schema
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.git_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install pinned Appwrite CLI
+        run: >-
+          npm install --global --ignore-scripts --no-audit --no-fund
+          "appwrite-cli@$APPWRITE_CLI_VERSION"
+      - name: Validate protected Appwrite target
+        env:
+          APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
+          APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
+          DEPLOY_ENV: ${{ inputs.environment }}
+        run: |
+          bash scripts/ops/require-env.sh \
+            APPWRITE_ENDPOINT APPWRITE_PROJECT_ID DEPLOY_ENV
+          node scripts/ops/verify-appwrite-config.mjs "$DEPLOY_ENV"
+      - name: Push checked-in Appwrite resource definitions
+        env:
+          APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
+          APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
+          APPWRITE_DEPLOY_API_KEY: ${{ secrets.APPWRITE_DEPLOY_API_KEY }}
+          DEPLOY_ENV: ${{ inputs.environment }}
+        run: |
+          bash scripts/ops/require-env.sh \
+            APPWRITE_ENDPOINT APPWRITE_PROJECT_ID APPWRITE_DEPLOY_API_KEY DEPLOY_ENV
+          appwrite_home="$RUNNER_TEMP/appwrite-home"
+          client_log="$RUNNER_TEMP/appwrite-client.log"
+          trap 'rm -rf -- "$appwrite_home" "$client_log"' EXIT
+          umask 077
+          mkdir -p "$appwrite_home"
+          export APPWRITE_CLI_HOME="$appwrite_home"
+          if ! HOME="$appwrite_home" appwrite client \
+            --endpoint "$APPWRITE_ENDPOINT" \
+            --project-id "$APPWRITE_PROJECT_ID" \
+            --key "$APPWRITE_DEPLOY_API_KEY" >"$client_log" 2>&1; then
+            echo "Failed to configure the protected Appwrite target" >&2
+            exit 1
+          fi
+          cd "infrastructure/appwrite/$DEPLOY_ENV"
+          HOME="$appwrite_home" appwrite --force push all --no-logs

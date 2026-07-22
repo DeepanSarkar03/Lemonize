@@ -6,7 +6,7 @@ The workspace exposes `lem` and `lemx` from `@lemonize/cli`. Contributors can bu
 pnpm cli:link
 ```
 
-Standalone installers are served from `https://registry.lemonize.cyou` after the protected CLI release workflow publishes binaries. That production release path is not complete until its release-only `CLI_R2_API_TOKEN` is provisioned.
+Install the CLI through the npm package protected by trusted publishing and provenance: `npm install --global @lemonize/cli`. The registry bootstrap scripts delegate to the same npm command; mutable native binaries are not an installation trust root.
 
 ## Global flags and registry selection
 
@@ -51,7 +51,7 @@ lem token revoke <token-id>
 lem token revoke-all
 ```
 
-`token create` accepts a 1-90 day lifetime (default 30). A token-created child cannot contain a scope its parent lacks or outlive its parent. Only the creation response prints the raw credential. `token list` shows metadata and prefixes, never raw values. `revoke-all` revokes the currently visible active tokens one by one and removes the current credential last.
+`token create` accepts a 1-90 day lifetime (default 30) and the child scopes `read`, `publish`, and `manage:packages`. A child cannot receive `manage:tokens`, contain a scope its root lacks, or outlive its root, so it cannot create another token. Only the creation response prints the raw credential. `token list` shows metadata and prefixes for the current root lineage, never raw values. `revoke-all` revokes that visible lineage one by one and removes the current root last; it cannot revoke independent login/device roots. Revoking or logging out the root also invalidates all of its children.
 
 ## Package names and versions
 
@@ -111,8 +111,8 @@ lem install --frozen-lockfile
 | `lem whoami`                                     | Show the authenticated Lemonize identity                                                                      |
 | `lem token list` / `lem tokens ls`               | List active token metadata and prefixes                                                                       |
 | `lem token create <label> [options]`             | Create a scoped 1-90 day token; the raw credential is displayed once                                          |
-| `lem token revoke <id>`                          | Revoke one token owned by the current account                                                                 |
-| `lem token revoke-all`                           | Revoke all active tokens visible to the current credential                                                    |
+| `lem token revoke <id>`                          | Revoke the current root or one of its direct children                                                         |
+| `lem token revoke-all`                           | Revoke the current root lineage; independent login/device roots are isolated                                  |
 | `lem publish [--tag t] [--access a] [--dry-run]` | Pack, reserve, upload, and queue the current project for scanning                                             |
 | `lem install [pkg...]` / `lem i`                 | Recursively install explicit targets or all declared npm/Lemonize roots                                       |
 | `lem add <pkg...>`                               | Recursively install and save to npm dependencies or `lemonizeDependencies`                                    |

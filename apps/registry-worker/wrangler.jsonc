@@ -84,7 +84,7 @@
     "staging": {
       "triggers": { "crons": ["*/15 * * * *"] },
       "vars": {
-        "ALLOW_PUBLIC_PUBLISH": "true",
+        "ALLOW_PUBLIC_PUBLISH": "false",
         "ALLOW_PRIVATE_PACKAGES": "false",
         "MAX_TARBALL_SIZE_BYTES": "10485760",
         "MAX_UNPACKED_SIZE_BYTES": "104857600",
@@ -96,7 +96,7 @@
         "WEB_BASE_URL": "https://lemonize-staging.vercel.app",
         "CORS_ALLOWED_ORIGINS": "https://lemonize-staging.vercel.app",
         "ADMIN_CLERK_IDS": "",
-        "REGISTRY_MODE": "public",
+        "REGISTRY_MODE": "read_only",
         "APPWRITE_ENDPOINT": "https://fra.cloud.appwrite.io/v1",
         "APPWRITE_PROJECT_ID": "lemonize-staging-2026",
         "APPWRITE_DATABASE_ID": "registry",

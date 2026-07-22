@@ -50,19 +50,19 @@ Supported API-token scopes are:
 | `read`            | Reserved/descriptive today; public reads and `/auth/me` do not currently gate on it  |
 | `publish`         | Start and complete publishes, subject to role, mode, namespace, and ownership checks |
 | `manage:packages` | Package maintenance operations                                                       |
-| `manage:tokens`   | List and revoke the account's API tokens                                             |
+| `manage:tokens`   | Manage the current root lineage; a fresh Clerk session may manage every account token |
 
-The automatic device token lasts 30 days. Consumers receive `read` and `manage:tokens`; publishers and admins receive all four scopes. Token creation accepts an explicit scope set and a 1-90 day lifetime. An API-token parent must have `manage:tokens`, cannot delegate a scope it lacks, and caps the child at its own expiry. The active-token limit is ten per account. The runtime validates that stored scopes are recognized, but only publish and management routes currently enforce a capability scope.
+The automatic device token lasts 30 days. Consumers receive `read` and `manage:tokens`; publishers and admins receive all four scopes. These Clerk/device-issued credentials are independent roots. Token creation accepts an explicit scope set and a 1-90 day lifetime. An API-token root must have `manage:tokens`; its child cannot receive `manage:tokens`, cannot receive another scope the root lacks, and cannot outlive the root. A child therefore cannot delegate again. The active-token limit is ten per account. The runtime validates that stored scopes are recognized, but only publish and management routes currently enforce a capability scope.
 
 Legacy unscoped packages are compatibility data only. They remain readable and downloadable, while the publish path rejects an unscoped name and non-admin maintenance requires a non-empty package scope matching the authenticated namespace. Administrators retain an explicit remediation override only when the registry is mutable; production `read_only` rejects every HTTP package-mutation route before that override.
 
 ## API-token storage and revocation
 
 - Tokens are high-entropy opaque values prefixed `lem_live_`; the raw credential is returned once.
-- Appwrite TablesDB stores a SHA-256 digest, display prefix, scopes, expiry, and revocation state, never the raw token.
-- Every API-token request checks the authoritative token row, expiry, recognized stored scope set, and current TablesDB user state, then runs the Clerk active-account check. Publish and management middleware enforce their specific capability scopes.
+- Appwrite TablesDB stores a SHA-256 digest, display prefix, scopes, expiry, revocation state, and optional parent/root linkage, never the raw token. Rows created before linkage was introduced remain independent roots.
+- Every API-token request checks the authoritative token row, expiry, recognized stored scope set, and current TablesDB user state, then runs the Clerk active-account check. A child request also revalidates its root's user, revocation, expiry, scope ceiling, and expiry ceiling. Publish and management middleware enforce their specific capability scopes.
 - KV accelerates known revocations and caches a positive Clerk active-account result for up to 15 minutes (a negative result for 60 seconds). It does not replace TablesDB or Clerk as the authority.
-- `lem token list/create/revoke/revoke-all` exposes token lifecycle controls. Creation returns the raw token once; list responses expose only metadata/prefixes. The browser API also has a fresh-Clerk-session revoke-all route.
+- `lem token list/create/revoke/revoke-all` exposes lifecycle controls for the current root and its direct children. Creation returns the raw token once; list responses expose only metadata/prefixes. Revoking or logging out a root cascades to its children, while revoking a child leaves its root and siblings active. Only a fresh Clerk session may list/revoke across independent roots or use the account-wide revoke-all route.
 - Logging and audit records must never contain bearer tokens, Clerk JWTs, API keys, upload capabilities, or raw IP addresses.
 
 ## Appwrite data plane and provider credentials

@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:test';
 import { describe, expect, it, vi } from 'vitest';
 import { handleProxyRequest, type CacheStore, type ProxyDependencies } from '../src/proxy.js';
 import type { AdmissionCandidate, AdmissionDecision } from '../src/admission.js';
@@ -70,24 +71,28 @@ function createHarness(
     ...timeoutOverrides,
   };
 
+  const handle = (request: Request, publicOrigin = 'https://npm.lemonize.cyou') =>
+    handleProxyRequest(
+      request,
+      dependencies,
+      { waitUntil: (promise) => pending.push(promise) },
+      true,
+      'test-request-id',
+      publicOrigin,
+      packumentMode,
+    );
+
   return {
     cache,
     upstreamFetch,
     admitOrigin,
+    handle,
     async request(
       path: string,
       init: RequestInit = {},
       publicOrigin = 'https://npm.lemonize.cyou',
     ) {
-      return handleProxyRequest(
-        new Request(`https://npm.lemonize.cyou${path}`, init),
-        dependencies,
-        { waitUntil: (promise) => pending.push(promise) },
-        true,
-        'test-request-id',
-        publicOrigin,
-        packumentMode,
-      );
+      return handle(new Request(`https://npm.lemonize.cyou${path}`, init), publicOrigin);
     },
     async flush() {
       await Promise.all(pending.splice(0));
@@ -733,6 +738,34 @@ describe('origin admission integration', () => {
     expect(harness.upstreamFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('does not spend global route capacity when one client is already denied', async () => {
+    const upstreamFetch = vi.fn(async () => jsonResponse({ objects: [], total: 0 }));
+    const app = createApp({ fetch: upstreamFetch, getCache: () => null });
+    const bindings = {
+      NPM_ADMISSION_CONTROLLER: env.NPM_ADMISSION_CONTROLLER,
+      NPM_PROXY_ENABLED: 'true',
+    };
+    const execute = (clientIp: string) =>
+      app.fetch(
+        new Request('https://npm.lemonize.cyou/-/v1/search?text=package', {
+          headers: { 'cf-connecting-ip': clientIp },
+        }),
+        bindings,
+        {
+          waitUntil: () => undefined,
+          passThroughOnException: () => undefined,
+          props: {},
+        } as unknown as ExecutionContext,
+      );
+
+    expect((await execute('2001:db8:1::1')).status).toBe(200);
+    const denied = await execute('2001:db8:1::2');
+    expect(denied.status).toBe(429);
+    expect(await denied.json()).toMatchObject({ code: 'ORIGIN_BUDGET_EXHAUSTED' });
+    expect((await execute('2001:db8:2::1')).status).toBe(200);
+    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('rechecks metadata cache after admission before fetching npm', async () => {
     const cache = new MemoryCache();
     let lookups = 0;
@@ -827,6 +860,30 @@ describe('origin admission integration', () => {
     expect(response.status).toBe(429);
     expect(response.headers.get('retry-after')).toBe('17');
     expect(await response.json()).toMatchObject({ code: 'ORIGIN_BUDGET_EXHAUSTED' });
+    expect(harness.upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects audit admission without reading or buffering its request body', async () => {
+    const harness = createHarness(
+      () => jsonResponse({ shouldNot: 'run' }),
+      new MemoryCache(),
+      {},
+      'free',
+      () => ({
+        allowed: false,
+        reason: 'client_route_minute',
+        retryAfterSeconds: 11,
+      }),
+    );
+    const request = new Request('https://npm.lemonize.cyou/-/npm/v1/security/audits/quick', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"name":"unread"}',
+    });
+
+    const response = await harness.handle(request);
+    expect(response.status).toBe(429);
+    expect(request.bodyUsed).toBe(false);
     expect(harness.upstreamFetch).not.toHaveBeenCalled();
   });
 

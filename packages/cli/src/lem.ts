@@ -56,7 +56,7 @@ token
     (value) => Number(value),
     30,
   )
-  .option('--scope <scopes...>', 'read, publish, manage:packages, manage:tokens')
+  .option('--scope <scopes...>', 'read, publish, manage:packages')
   .action(async (label, options) =>
     cmd.cmdTokenCreate(label, {
       ...g(),

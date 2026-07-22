@@ -181,4 +181,44 @@ describe('RegistryAppwriteRepository', () => {
     );
     await expect(repo.scanJobs.getOrNull('missing-row')).resolves.toBeNull();
   });
+
+  it('uses the indexed user/root lineage query for active API tokens', async () => {
+    let requestedUrl = '';
+    const repo = new RegistryAppwriteRepository(
+      client(async (url) => {
+        requestedUrl = url;
+        return json({ total: 0, rows: [] });
+      }),
+    );
+
+    await repo.listTokensByRoot('user-1', 'root-a', { activeOnly: true });
+
+    expect(new URL(requestedUrl).searchParams.getAll('queries[]')).toEqual([
+      '{"method":"equal","attribute":"userId","values":["user-1"]}',
+      '{"method":"equal","attribute":"rootTokenId","values":["root-a"]}',
+      '{"method":"isNull","attribute":"revokedAt"}',
+      '{"method":"orderDesc","attribute":"$createdAt"}',
+    ]);
+  });
+
+  it('orders expired reservations by oldest update before applying cursor limits', async () => {
+    let requestedUrl = '';
+    const repo = new RegistryAppwriteRepository(
+      client(async (url) => {
+        requestedUrl = url;
+        return json({ total: 0, rows: [] });
+      }),
+    );
+
+    await repo.listExpiredReservations('2026-07-18T00:00:00.000Z', {
+      queries: [AppwriteQuery.limit(100)],
+      total: false,
+    });
+
+    expect(new URL(requestedUrl).searchParams.getAll('queries[]')).toEqual([
+      '{"method":"lessThanEqual","attribute":"expiresAt","values":["2026-07-18T00:00:00.000Z"]}',
+      '{"method":"orderAsc","attribute":"$updatedAt"}',
+      '{"method":"limit","values":[100]}',
+    ]);
+  });
 });

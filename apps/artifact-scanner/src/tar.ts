@@ -1,5 +1,6 @@
 import { gunzipSync } from 'node:zlib';
 import { ScannerError } from './errors.js';
+import { assertManifestJsonStructure, ManifestJsonError } from './manifest-json.js';
 import type { ArchiveValidation, ScanJob } from './types.js';
 
 export const HARD_MAX_UNPACKED_BYTES = 100 * 1024 * 1024;
@@ -188,6 +189,12 @@ function validateManifest(data: Uint8Array, job: ScanJob): Record<string, unknow
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     return reject('invalid_manifest');
+  }
+  try {
+    assertManifestJsonStructure(parsed);
+  } catch (error) {
+    if (error instanceof ManifestJsonError) return reject('invalid_manifest');
+    throw error;
   }
   const manifest = parsed as Record<string, unknown>;
   if (manifest.name !== job.packageName || manifest.version !== job.version) {
