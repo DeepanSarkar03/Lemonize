@@ -160,12 +160,9 @@ jobs:
           if published=$(npm view "@lemonize/cli@$version" version 2>/dev/null); then
             test "$published" = "$version" || exit 1
             attestations=$(npm view "@lemonize/cli@$version" dist.attestations --json)
-            node - "$attestations" <<'NODE'
-            const value = JSON.parse(process.argv[2]);
-            if (!value || typeof value.url !== 'string' || typeof value.provenance?.predicateType !== 'string') {
-              throw new Error('Published CLI release is missing npm provenance');
-            }
-            NODE
+            node -e \
+              'const value = JSON.parse(process.argv[1]); if (!value || typeof value.url !== "string" || typeof value.provenance?.predicateType !== "string") { throw new Error("Published CLI release is missing npm provenance"); }' \
+              "$attestations"
           else
             npm publish "$tarball" --ignore-scripts --access public --provenance
           fi
