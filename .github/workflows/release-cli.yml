@@ -126,7 +126,7 @@ jobs:
             --connect-timeout 10 --max-time 30 \
             --proto '=https' \
             --header 'Accept: application/json' \
-            --output "$RUNNER_TEMP/npm-release-metadata.json" \
+            --output /dev/null \
             --write-out '%{http_code}' \
             "https://registry.npmjs.org/%40lemonize%2Fcli/$version")
           case "$registry_status" in
@@ -222,7 +222,7 @@ jobs:
             --connect-timeout 10 --max-time 30 \
             --proto '=https' \
             --header 'Accept: application/json' \
-            --output "$RUNNER_TEMP/npm-release-metadata.json" \
+            --output /dev/null \
             --write-out '%{http_code}' \
             "https://registry.npmjs.org/%40lemonize%2Fcli/$version")
           case "$registry_status" in
