@@ -135,7 +135,6 @@ export interface ButtonProps
   extends Omit<AriaButtonProps, 'isDisabled' | 'isPending'>, VariantProps<typeof buttonStyles> {
   disabled?: boolean;
   pending?: boolean;
-  readOnly?: boolean;
 }
 
 export function Button({

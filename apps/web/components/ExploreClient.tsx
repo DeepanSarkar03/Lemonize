@@ -146,39 +146,43 @@ export function ExploreClient({ query }: { query: string }) {
           )}
         </Card>
       ) : (
-        <div className="stagger space-y-3">
+        <div>
           <p className="sr-only" role="status" aria-live="polite">
             {results.length} {results.length === 1 ? 'package' : 'packages'} found.
           </p>
-          {results.map((result) => (
-            <Link key={result.name} href={`/packages/${result.name}`} className="group block">
-              <Card className="card-hover flex-row items-center justify-between gap-4 p-5">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-sm font-semibold text-ink-900">
-                      {result.name}
-                    </span>
-                    <Badge color="primary">{result.latest}</Badge>
-                  </div>
-                  {result.description ? (
-                    <p className="mt-2 truncate text-sm text-ink-600">{result.description}</p>
-                  ) : null}
-                </div>
-                <div className="flex shrink-0 items-center gap-4 text-xs text-ink-600">
-                  <span className="tnum hidden items-center gap-1.5 font-mono sm:flex">
-                    <DownloadSimple size={14} weight="bold" /> {result.downloads}
-                  </span>
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full border border-line transition-colors group-hover:border-citron group-hover:bg-lemon-bg">
-                    <ArrowUpRight
-                      size={15}
-                      weight="bold"
-                      className="transition-transform duration-300 ease-spring group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-lemon-text"
-                    />
-                  </span>
-                </div>
-              </Card>
-            </Link>
-          ))}
+          <ul className="stagger space-y-3">
+            {results.map((result) => (
+              <li key={result.name}>
+                <Link href={`/packages/${result.name}`} className="group block">
+                  <Card className="card-hover flex-row items-center justify-between gap-4 p-5">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-sm font-semibold text-ink-900">
+                          {result.name}
+                        </span>
+                        <Badge color="primary">{result.latest}</Badge>
+                      </div>
+                      {result.description ? (
+                        <p className="mt-2 truncate text-sm text-ink-600">{result.description}</p>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-4 text-xs text-ink-600">
+                      <span className="tnum hidden items-center gap-1.5 font-mono sm:flex">
+                        <DownloadSimple size={14} weight="bold" /> {result.downloads}
+                      </span>
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full border border-line transition-colors group-hover:border-citron group-hover:bg-lemon-bg">
+                        <ArrowUpRight
+                          size={15}
+                          weight="bold"
+                          className="transition-transform duration-300 ease-spring group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-lemon-text"
+                        />
+                      </span>
+                    </div>
+                  </Card>
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

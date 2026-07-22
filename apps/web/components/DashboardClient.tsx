@@ -180,7 +180,7 @@ function UsageMeter({
           {display ?? `${value} / ${limit}`}
         </span>
       </div>
-      <Progress progress={percent} className="max-w-none" />
+      <Progress progress={percent} aria-label={label} className="max-w-none" />
     </div>
   );
 }

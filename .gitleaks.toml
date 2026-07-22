@@ -9,12 +9,13 @@ useDefault = true
 id = "generic-api-key"
 
   [[rules.allowlists]]
-  description = "Known non-secret Clerk and HMAC test fixtures"
+  description = "Known non-secret Clerk, HMAC, and idempotency test fixtures"
   regexTarget = "secret"
   regexes = [
     '''^pk_test_Y2xlcmsuZXhhbXBsZS5jb20k$''',
     '''^0123456789abcdef0123456789abcdef$''',
     '''^test-signing-secret-with-at-least-32-bytes$''',
+    '''^idempotency-1$''',
   ]
 
 # This source file contains the literal markers that the artifact scanner must
