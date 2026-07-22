@@ -147,9 +147,14 @@ jobs:
         env:
           DEPLOY_ENV: ${{ inputs.environment }}
           NPM_PROXY_BASE_URL: ${{ vars.NPM_PROXY_BASE_URL }}
+          REQUESTED_SHA: ${{ inputs.git_ref }}
         run: |
           set -euo pipefail
-          bash scripts/ops/require-env.sh DEPLOY_ENV NPM_PROXY_BASE_URL
+          bash scripts/ops/require-env.sh DEPLOY_ENV NPM_PROXY_BASE_URL REQUESTED_SHA
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "git_ref must remain a full 40-character commit SHA" >&2
+            exit 1
+          fi
 
           case "$DEPLOY_ENV" in
             staging) expected_origin='https://npm-staging.lemonize.cyou' ;;
@@ -191,7 +196,19 @@ jobs:
           if (
             !Array.isArray(body.keys) ||
             body.keys.length === 0 ||
-            body.keys.some((key) => typeof key?.keyid !== 'string' || typeof key?.key !== 'string')
+            body.keys.some(
+              (key) =>
+                typeof key?.keyid !== 'string' ||
+                key.keyid.length === 0 ||
+                typeof key?.keytype !== 'string' ||
+                key.keytype.length === 0 ||
+                typeof key?.scheme !== 'string' ||
+                key.scheme.length === 0 ||
+                typeof key?.key !== 'string' ||
+                key.key.length === 0 ||
+                (key?.expires !== null &&
+                  (typeof key?.expires !== 'string' || !Number.isFinite(Date.parse(key.expires)))),
+            )
           ) {
             throw new Error('npm proxy signing-key response is invalid');
           }
@@ -257,7 +274,7 @@ jobs:
           {
             echo "### npm proxy deployment completed"
             echo "- Environment: $DEPLOY_ENV"
-            echo "- Commit: ${{ inputs.git_ref }}"
+            echo "- Commit: $REQUESTED_SHA"
             echo "- Origin: $proxy_origin"
             echo "- Installed @lemonize/cli@$latest_version through the proxy"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -61,15 +61,11 @@ jobs:
             }
           done
 
-  publish:
+  package:
     needs: gate
     runs-on: ubuntu-latest
-    # This environment intentionally has no Cloudflare, Vercel, Clerk, or
-    # Appwrite secrets. Its only authority comes from npm's exact OIDC binding.
-    environment: npm-release
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,34 +75,97 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
-      - name: Build and pack npm package
-        run: |
-          pnpm --filter '@lemonize/cli...' build
-          cd packages/cli
-          npm pack --json > "$RUNNER_TEMP/cli-pack.json"
-      - name: Publish or verify @lemonize/cli with npm trusted publishing
-        working-directory: packages/cli
+      - name: Build and pack npm package without release authority
         env:
-          CLI_PACK_JSON: ${{ runner.temp }}/cli-pack.json
-          RELEASE_PACKAGE: '@lemonize/cli'
-          RELEASE_VERSION: ${{ github.ref_name }}
-          RELEASE_REPOSITORY: https://github.com/${{ github.repository }}
-          RELEASE_SHA: ${{ github.sha }}
-          RELEASE_REF: ${{ github.ref }}
-          RELEASE_WORKFLOW: .github/workflows/release-cli.yml
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          version=${RELEASE_VERSION#cli-v}
+          set -euo pipefail
+          version=${RELEASE_TAG#cli-v}
+          pnpm --filter '@lemonize/cli...' build
+          mkdir -p "$RUNNER_TEMP/cli-package"
+          (
+            cd packages/cli
+            npm pack --ignore-scripts --json \
+              --pack-destination "$RUNNER_TEMP/cli-package" > "$RUNNER_TEMP/cli-pack.json"
+          )
+          node - "$RUNNER_TEMP/cli-pack.json" "$version" <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const [path, version] = process.argv.slice(2);
+          const value = JSON.parse(readFileSync(path, 'utf8'));
+          if (
+            !Array.isArray(value) ||
+            value.length !== 1 ||
+            value[0]?.name !== '@lemonize/cli' ||
+            value[0]?.version !== version ||
+            value[0]?.filename !== `lemonize-cli-${version}.tgz` ||
+            typeof value[0]?.integrity !== 'string' ||
+            !value[0].integrity.startsWith('sha512-')
+          ) {
+            throw new Error('npm pack returned unexpected CLI artifact metadata');
+          }
+          NODE
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-package-${{ github.sha }}
+          path: ${{ runner.temp }}/cli-package/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    # This environment intentionally has no Cloudflare, Vercel, Clerk, or
+    # Appwrite secrets. Its only authority comes from npm's exact OIDC binding.
+    environment: npm-release
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-package-${{ github.sha }}
+          path: ${{ runner.temp }}/cli-package
+          digest-mismatch: error
+      - name: Publish or verify @lemonize/cli with npm trusted publishing
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=${RELEASE_TAG#cli-v}
+          shopt -s nullglob
+          tarballs=("$RUNNER_TEMP/cli-package"/*.tgz)
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "Expected exactly one CLI tarball from the package job" >&2
+            exit 1
+          fi
+          tarball=${tarballs[0]}
+          test "$(basename "$tarball")" = "lemonize-cli-$version.tgz"
+          manifest=$(tar -xOf "$tarball" package/package.json)
+          node - "$manifest" "$version" <<'NODE'
+          const [raw, version] = process.argv.slice(2);
+          const manifest = JSON.parse(raw);
+          if (manifest.name !== '@lemonize/cli' || manifest.version !== version) {
+            throw new Error('CLI tarball identity does not match the release tag');
+          }
+          NODE
           if published=$(npm view "@lemonize/cli@$version" version 2>/dev/null); then
             test "$published" = "$version" || exit 1
-            RELEASE_VERSION="$version" node ../../scripts/ops/verify-npm-release.mjs
+            attestations=$(npm view "@lemonize/cli@$version" dist.attestations --json)
+            node - "$attestations" <<'NODE'
+            const value = JSON.parse(process.argv[2]);
+            if (!value || typeof value.url !== 'string' || typeof value.provenance?.predicateType !== 'string') {
+              throw new Error('Published CLI release is missing npm provenance');
+            }
+            NODE
           else
-            tarball=$(node -e '
-              const fs = require("node:fs");
-              const value = JSON.parse(fs.readFileSync(process.env.CLI_PACK_JSON, "utf8"));
-              if (!Array.isArray(value) || value.length !== 1 || typeof value[0].filename !== "string") process.exit(1);
-              process.stdout.write(value[0].filename);
-            ')
-            npm publish "$tarball" --access public --provenance
+            npm publish "$tarball" --ignore-scripts --access public --provenance
           fi

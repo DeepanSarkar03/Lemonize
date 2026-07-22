@@ -95,7 +95,19 @@ const body = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 if (
   !Array.isArray(body.keys) ||
   body.keys.length === 0 ||
-  body.keys.some((key) => typeof key?.keyid !== 'string' || typeof key?.key !== 'string')
+  body.keys.some(
+    (key) =>
+      typeof key?.keyid !== 'string' ||
+      key.keyid.length === 0 ||
+      typeof key?.keytype !== 'string' ||
+      key.keytype.length === 0 ||
+      typeof key?.scheme !== 'string' ||
+      key.scheme.length === 0 ||
+      typeof key?.key !== 'string' ||
+      key.key.length === 0 ||
+      (key?.expires !== null &&
+        (typeof key?.expires !== 'string' || !Number.isFinite(Date.parse(key.expires)))),
+  )
 ) {
   throw new Error('npm proxy did not return a valid signing-key document');
 }

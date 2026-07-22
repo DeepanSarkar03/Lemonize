@@ -24,7 +24,6 @@ if [[ "${1:-}" == "--json" && "${2:-}" == "backups" && "${3:-}" == "list-archive
 const [mode, policyId] = process.argv.slice(2);
 const minutesAgo = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
 const latestAgeMinutes = mode === 'stale' ? 27 * 60 : 30;
-const latestSize = mode === 'empty' ? 0 : 4096;
 
 process.stdout.write(JSON.stringify({
   archives: [
@@ -54,9 +53,30 @@ process.stdout.write(JSON.stringify({
       $createdAt: mode === 'invalid-time' ? 'not-a-timestamp' : minutesAgo(latestAgeMinutes),
       policyId,
       status: 'completed',
-      size: latestSize,
     },
   ],
+}));
+NODE
+  exit 0
+fi
+
+if [[ "${1:-}" == "--json" && "${2:-}" == "backups" && "${3:-}" == "get-archive" ]]; then
+  if [[ "${4:-}" != "--archive-id" || "${5:-}" != "target-newest-completed" ]]; then
+    echo "Verification selected the wrong Appwrite archive: $*" >&2
+    exit 65
+  fi
+  node - "${APPWRITE_BACKUP_TEST_MODE:-healthy}" "${APPWRITE_BACKUP_POLICY_ID:-lemonize-daily}" <<'NODE'
+const [mode, policyId] = process.argv.slice(2);
+const minutesAgo = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
+const services = mode === 'missing-service' ? ['tablesdb', 'storage'] : ['tablesdb', 'functions', 'storage'];
+
+process.stdout.write(JSON.stringify({
+  $id: 'target-newest-completed',
+  $createdAt: minutesAgo(mode === 'stale' ? 27 * 60 : 30),
+  policyId,
+  status: 'completed',
+  size: mode === 'empty' ? 0 : 4096,
+  services,
 }));
 NODE
   exit 0
@@ -98,5 +118,11 @@ if run_verify invalid-time >"$temp_dir/invalid-time.log" 2>&1; then
   exit 1
 fi
 grep -Fq 'has an invalid creation time' "$temp_dir/invalid-time.log"
+
+if run_verify missing-service >"$temp_dir/missing-service.log" 2>&1; then
+  echo 'Expected missing-service archive verification to fail' >&2
+  exit 1
+fi
+grep -Fq 'does not cover all required services' "$temp_dir/missing-service.log"
 
 echo 'Appwrite backup verification regression test passed'
