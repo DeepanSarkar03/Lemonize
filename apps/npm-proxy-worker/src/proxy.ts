@@ -1,10 +1,12 @@
 import {
   MAX_AUDIT_BYTES,
   MAX_PACKUMENT_BYTES,
+  MAX_SIGNING_KEYS_BYTES,
   MAX_TARBALL_BYTES,
   METADATA_TTL_SECONDS,
   NEGATIVE_TTL_SECONDS,
   PUBLIC_ORIGIN,
+  SIGNING_KEYS_TTL_SECONDS,
   UPSTREAM_ORIGIN,
   InvalidNpmPathError,
   classifyPath,
@@ -680,6 +682,13 @@ function canonicalSearch(route: NpmRoute, incomingUrl: URL): string {
     return '';
   }
 
+  if (route.kind === 'signing-keys') {
+    if (input.size > 0) {
+      throw new InvalidNpmPathError('The npm signing-key route does not accept query parameters.');
+    }
+    return '';
+  }
+
   if (route.kind === 'ping') {
     const values = input.getAll('write');
     if (input.size === 0) return '';
@@ -882,13 +891,16 @@ async function normalizedUtilityResponse(
   });
 }
 
-function applyMetadataCaching(response: Response): { response: Response; cacheable: boolean } {
+function applyMetadataCaching(
+  response: Response,
+  successTtlSeconds = METADATA_TTL_SECONDS,
+): { response: Response; cacheable: boolean } {
   const headers = cleanHeaders(response.headers);
   let cacheable = false;
   if (response.status >= 200 && response.status < 300) {
     headers.set(
       'cache-control',
-      `public, max-age=${METADATA_TTL_SECONDS}, s-maxage=${METADATA_TTL_SECONDS}`,
+      `public, max-age=${successTtlSeconds}, s-maxage=${successTtlSeconds}`,
     );
     cacheable = true;
   } else if (NEGATIVE_STATUSES.has(response.status)) {
@@ -968,7 +980,11 @@ async function handleMetadata(
         )
       : await normalizedUtilityResponse(
           upstream,
-          route.kind === 'search' ? MAX_SEARCH_BYTES : MAX_PING_BYTES,
+          route.kind === 'search'
+            ? MAX_SEARCH_BYTES
+            : route.kind === 'signing-keys'
+              ? MAX_SIGNING_KEYS_BYTES
+              : MAX_PING_BYTES,
           idleTimeout,
         );
   const cachePolicy = bypassCache
@@ -983,7 +999,10 @@ async function handleMetadata(
         }),
         cacheable: false,
       }
-    : applyMetadataCaching(normalized);
+    : applyMetadataCaching(
+        normalized,
+        route.kind === 'signing-keys' ? SIGNING_KEYS_TTL_SECONDS : METADATA_TTL_SECONDS,
+      );
   if (cachePolicy.cacheable)
     scheduleCachePut(runtime, cached.cache, key, cachePolicy.response.clone());
   return clientResponse(cachePolicy.response, cached.status, request.method, request.headers);

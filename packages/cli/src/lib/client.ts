@@ -1,6 +1,7 @@
 import { LemonizeClient } from '@lemonize/shared';
 import { resolveRegistry, getToken } from './config.js';
 import { createSecureRegistryFetch } from './http.js';
+import { CLI_VERSION } from '../version.js';
 
 export interface ClientContext {
   registry: string;
@@ -18,7 +19,7 @@ export function makeClient(registryFlag?: string, requireToken = false): ClientC
     registry,
     token,
     fetchImpl: createSecureRegistryFetch(registry),
-    userAgent: 'lem-cli/0.1.0',
+    userAgent: `lem-cli/${CLI_VERSION}`,
   });
   return { registry, token, client };
 }

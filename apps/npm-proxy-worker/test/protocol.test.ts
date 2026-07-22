@@ -9,6 +9,13 @@ import {
 } from '../src/protocol.js';
 
 describe('npm URL protocol', () => {
+  it('allows only the exact public npm signing-key route', () => {
+    expect(classifyPath('/-/npm/v1/keys')).toEqual({ kind: 'signing-keys' });
+    expect(classifyPath('/-/npm/v1/keys/')).toBeNull();
+    expect(classifyPath('/-/npm/v1/tokens')).toBeNull();
+    expect(classifyPath('/-/npm/v1/user')).toBeNull();
+  });
+
   it('accepts encoded and slash-form scoped packuments', () => {
     expect(classifyPath('/@scope%2Fpackage')).toEqual({
       kind: 'packument',

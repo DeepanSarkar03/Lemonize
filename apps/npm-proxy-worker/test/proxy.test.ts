@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleProxyRequest, type CacheStore, type ProxyDependencies } from '../src/proxy.js';
 import type { AdmissionCandidate, AdmissionDecision } from '../src/admission.js';
 import { createApp } from '../src/index.js';
-import { MAX_AUDIT_BYTES, MAX_PACKUMENT_BYTES, MAX_TARBALL_BYTES } from '../src/protocol.js';
+import {
+  MAX_AUDIT_BYTES,
+  MAX_PACKUMENT_BYTES,
+  MAX_SIGNING_KEYS_BYTES,
+  MAX_TARBALL_BYTES,
+} from '../src/protocol.js';
 
 type StoredResponse = {
   status: number;
@@ -487,6 +492,78 @@ describe('npm utility routes and read-only policy', () => {
     expect(await response.json()).toEqual({ ok: true });
   });
 
+  it('edge-caches the bounded public signing-key document without forwarding credentials', async () => {
+    const keys = {
+      keys: [
+        {
+          keyid: 'SHA256:public-key-id',
+          keytype: 'ecdsa-sha2-nistp256',
+          scheme: 'ecdsa-sha2-nistp256',
+          key: 'public-key-material',
+          expires: null,
+        },
+      ],
+    };
+    const harness = createHarness((request) => {
+      expect(request.url).toBe('https://registry.npmjs.org/-/npm/v1/keys');
+      expect(request.method).toBe('GET');
+      expect(request.headers.get('authorization')).toBeNull();
+      expect(request.headers.get('cookie')).toBeNull();
+      return jsonResponse(keys, {
+        headers: { etag: '"npm-signing-keys"', 'set-cookie': 'remove=me' },
+      });
+    });
+
+    const first = await harness.request('/-/npm/v1/keys', {
+      headers: { authorization: 'Bearer secret', cookie: 'session=secret' },
+    });
+    expect(first.status).toBe(200);
+    expect(first.headers.get('x-lemonize-cache')).toBe('MISS');
+    expect(first.headers.get('cache-control')).toBe('public, max-age=86400, s-maxage=86400');
+    expect(first.headers.get('set-cookie')).toBeNull();
+    expect(await first.json()).toEqual(keys);
+    await harness.flush();
+
+    const cached = await harness.request('/-/npm/v1/keys', { method: 'HEAD' });
+    expect(cached.status).toBe(200);
+    expect(cached.headers.get('x-lemonize-cache')).toBe('HIT');
+    expect(cached.headers.get('etag')).toBe('"npm-signing-keys"');
+    expect(await cached.text()).toBe('');
+    expect(harness.upstreamFetch).toHaveBeenCalledTimes(1);
+    expect(harness.admitOrigin).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds signing-key responses and rejects query parameters', async () => {
+    const oversized = createHarness(
+      () =>
+        new Response('{}', {
+          headers: { 'content-length': String(MAX_SIGNING_KEYS_BYTES + 1) },
+        }),
+    );
+    const tooLarge = await oversized.request('/-/npm/v1/keys');
+    expect(tooLarge.status).toBe(502);
+    expect(await tooLarge.json()).toMatchObject({ code: 'UPSTREAM_RESPONSE_TOO_LARGE' });
+
+    const queried = createHarness(() => jsonResponse({ shouldNot: 'run' }));
+    const invalid = await queried.request('/-/npm/v1/keys?write=true');
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ code: 'INVALID_NPM_PATH' });
+    expect(queried.upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/-/npm/v1/tokens',
+    '/-/npm/v1/user',
+    '/-/npm/v1/keys/rotated',
+    '/-/npm/v1/security/audits/quick/extra',
+  ])('rejects adjacent npm API path %s without contacting npm', async (path) => {
+    const harness = createHarness(() => jsonResponse({ shouldNot: 'run' }));
+    const response = await harness.request(path);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
+    expect(harness.upstreamFetch).not.toHaveBeenCalled();
+  });
+
   it('canonicalizes supported queries and rejects cache-fragmentation parameters', async () => {
     const harness = createHarness((request) => jsonResponse({ url: request.url }));
     const search = await harness.request('/-/v1/search?size=20&text=vitest&quality=1&from=0');
@@ -551,6 +628,7 @@ describe('npm utility routes and read-only policy', () => {
     ['PATCH', '/pkg', 'GET, HEAD'],
     ['DELETE', '/pkg/-/pkg.tgz', 'GET, HEAD'],
     ['GET', '/-/npm/v1/security/audits/quick', 'POST'],
+    ['POST', '/-/npm/v1/keys', 'GET, HEAD'],
   ])('returns 405 for %s %s', async (method, path, allow) => {
     const harness = createHarness(() => jsonResponse({ shouldNot: 'run' }));
     const response = await harness.request(path, { method });
@@ -825,6 +903,7 @@ describe('origin admission integration', () => {
     });
 
     await (await harness.request('/pkg')).arrayBuffer();
+    await (await harness.request('/-/npm/v1/keys')).arrayBuffer();
     await (await harness.request('/-/v1/search?text=pkg')).arrayBuffer();
     await (await harness.request('/pkg/-/pkg.tgz')).arrayBuffer();
     await (
@@ -836,6 +915,7 @@ describe('origin admission integration', () => {
     ).arrayBuffer();
 
     expect(harness.admitOrigin.mock.calls.map(([candidate]) => candidate.routeClass)).toEqual([
+      'metadata',
       'metadata',
       'search',
       'tarball',
