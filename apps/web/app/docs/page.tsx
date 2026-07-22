@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowUpRight, CheckCircle, HardDrives, Lightning } from '@phosphor-icons/react/dist/ssr';
 import { CopyBlock } from '@/components/CopyBlock';
-import { RegistryInstallTabs } from '@/components/RegistryInstallTabs';
 import {
   Alert,
   AlertContent,
@@ -101,7 +100,7 @@ export default function Docs() {
             provides the metadata and tarball route through Cloudflare.
           </p>
           <div className="mt-7">
-            <RegistryInstallTabs />
+            <CopyBlock text="npm install zod --registry=https://npm.lemonize.cyou" />
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
