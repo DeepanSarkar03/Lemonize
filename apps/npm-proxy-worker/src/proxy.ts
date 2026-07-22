@@ -1210,7 +1210,6 @@ async function handleAudit(
   if (route.kind !== 'audit-bulk' && route.kind !== 'audit-quick') {
     throw new ProxyHttpError(500, 'INTERNAL_ERROR', 'The audit route could not be resolved.');
   }
-  const body = await readAuditBody(request);
   const incomingUrl = new URL(request.url);
   const target = upstreamUrl(incomingUrl.pathname, canonicalSearch(route, incomingUrl));
   const headers = new Headers({
@@ -1222,6 +1221,7 @@ async function handleAudit(
   copyHeaderIfPresent(request.headers, headers, 'content-type');
 
   await requireOriginAdmission(request, dependencies, 'audit');
+  const body = await readAuditBody(request);
   const upstream = await fetchFromRegistry(
     dependencies,
     target,

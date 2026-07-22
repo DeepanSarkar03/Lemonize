@@ -3,7 +3,6 @@ import {
   signedDeviceCode,
   verifySignedDeviceCode,
   deviceUserCode,
-  hashToken,
   unauthorized,
   badRequest,
   deviceStartSchema,
@@ -12,9 +11,13 @@ import {
 } from '@lemonize/shared';
 import type { AppBindings, TokenScope } from '../lib/env.js';
 import { rateLimit } from '../lib/ratelimit.js';
-import { requireAuth, requireClerkSession, requireReader, bearerFrom } from '../lib/auth.js';
+import { requireAuth, requireClerkSession, requireReader } from '../lib/auth.js';
 import { registryRepository } from '../lib/registry.js';
-import { acquireApiTokenIssuanceLock, createApiToken } from '../lib/api-token.js';
+import {
+  acquireApiTokenIssuanceLock,
+  createApiToken,
+  revokeApiTokenLineage,
+} from '../lib/api-token.js';
 import { consumeDeviceApproval, storeDeviceApproval } from '../lib/device-approval.js';
 
 export const auth = new Hono<AppBindings>();
@@ -133,12 +136,26 @@ auth.get('/auth/me', requireAuth, requireReader, async (c) => {
 
 auth.post('/auth/logout', requireAuth, async (c) => {
   if (c.get('authType') !== 'api_token') return c.json({ ok: true });
-  const token = bearerFrom(c);
   const tokenId = c.get('tokenId');
-  if (token && tokenId) {
-    const tokenHash = await hashToken(token);
-    await registryRepository(c.env).revokeToken(tokenId);
-    await c.env.KV.put(`revoked:${tokenHash}`, '1', { expirationTtl: 86_400 });
+  if (tokenId) {
+    const repo = registryRepository(c.env);
+    const row = await repo.tokens.getOrNull(tokenId);
+    if (row) {
+      const revoked = await revokeApiTokenLineage(repo, row);
+      await Promise.all(
+        revoked.map((candidate) => {
+          const remainingSeconds = Math.ceil(
+            (Date.parse(candidate.expiresAt) - Date.now()) / 1_000,
+          );
+          return c.env.KV.put(`revoked:${candidate.tokenHash}`, '1', {
+            expirationTtl: Math.max(
+              60,
+              Number.isFinite(remainingSeconds) ? remainingSeconds : 86_400,
+            ),
+          }).catch(() => undefined);
+        }),
+      );
+    }
   }
   return c.json({ ok: true });
 });

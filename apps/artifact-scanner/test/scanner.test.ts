@@ -54,6 +54,7 @@ function packageArchive(input: {
   name?: string;
   version?: string;
   main?: string;
+  manifestExtra?: Record<string, unknown>;
   extraEntries?: TarEntry[];
 } = {}): { archive: Uint8Array; fileCount: number; unpackedSize: number } {
   const manifest = Buffer.from(
@@ -62,6 +63,7 @@ function packageArchive(input: {
       version: input.version ?? '1.2.3',
       main: input.main ?? 'index.js',
       files: ['index.js'],
+      ...input.manifestExtra,
     }),
   );
   const index = Buffer.from('export const answer = 42;\n');
@@ -248,6 +250,17 @@ describe('archive validation', () => {
       unpackedSize: 100 * 1024 * 1024 + 1,
     });
     expect(() => parseScanJob(candidate, config(vi.fn()))).toThrow('invalid_job');
+  });
+
+  it('rejects a depth-3000 manifest without overflowing canonicalization', () => {
+    let extension: unknown = 'leaf';
+    for (let depth = 0; depth < 3_000; depth += 1) extension = { nested: extension };
+    const pkg = packageArchive({ manifestExtra: { customMetadata: extension } });
+    const job = jobFor(pkg.archive, pkg.fileCount, pkg.unpackedSize, {
+      manifestSha256: '0'.repeat(64),
+    });
+
+    expect(() => validateGzipTar(pkg.archive, job, 100)).toThrow('invalid_manifest');
   });
 });
 

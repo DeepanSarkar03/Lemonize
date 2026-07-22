@@ -29,5 +29,6 @@ jobs:
           curl --fail --silent --show-error --max-time 15 \
             -H 'Accept: application/vnd.npm.install-v1+json' \
             https://npm.lemonize.cyou/is-number >/dev/null
-          curl --fail --silent --show-error --max-time 15 \
-            https://registry.lemonize.cyou/cli/latest.json >/dev/null
+          installer=$(curl --fail --silent --show-error --max-time 15 \
+            https://registry.lemonize.cyou/install.sh)
+          grep -Fq 'npm install --global @lemonize/cli@latest' <<<"$installer"

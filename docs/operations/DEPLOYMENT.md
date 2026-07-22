@@ -2,6 +2,8 @@
 
 Deployments are manual, immutable, and serialized per environment. Run `.github/workflows/deploy.yml` with `staging` or `production` and the full 40-character commit SHA that passed CI. The workflow repeats the frozen install, quality checks, build, tests, audits, Appwrite reconciliation, scanner deployment, Worker deployment, web deployment, and smoke tests.
 
+When Appwrite schema additions must exist before a Worker release and the Cloudflare or Vercel deploy credentials are intentionally unavailable, dispatch `.github/workflows/sync-appwrite-schema.yml` first with the protected environment and the same full commit SHA. It accepts only a commit reachable from `main` with all six exact-SHA CI checks successful, validates the environment-scoped Appwrite project ID against the selected checked-in definition, and uses only `APPWRITE_ENDPOINT`, `APPWRITE_PROJECT_ID`, and `APPWRITE_DEPLOY_API_KEY`. This schema-only workflow does not deploy scanner code, either Worker, or the web app; continue with the normal protected deployment after it succeeds.
+
 Deploying code does not authorize writes. Production remains `REGISTRY_MODE=read_only` and `ALLOW_PUBLIC_PUBLISH=false` until the separate cutover gate at the end of this runbook is approved.
 
 ## Repository and environment protection
@@ -58,7 +60,7 @@ Configure the following independently on the staging and production GitHub envir
 
 There is no publisher email or username allowlist. In `public` mode, publisher role assignment requires the stable GitHub external ID returned by Clerk; accounts without GitHub remain consumers. Require the intended Clerk verification/legal-consent flow, and use only immutable Clerk subjects in `ADMIN_CLERK_IDS` for administrators.
 
-The CLI release workflow has a separate production secret, `CLI_R2_API_TOKEN`, scoped only to writing CLI release objects in the production R2 bucket. It is not a Worker secret and must not be substituted for `CLOUDFLARE_API_TOKEN`. This release-only credential is currently an external setup blocker. The same workflow publishes `@lemonize/cli` with npm OIDC provenance, so the public npm organization/package and exact GitHub trusted-publisher relationship must exist before tagging a release; no long-lived npm token is accepted as a substitute.
+The CLI release workflow publishes `@lemonize/cli` with npm OIDC provenance. The public npm package and exact GitHub trusted-publisher relationship must exist before tagging a release; no long-lived npm token or mutable R2 binary channel is accepted as a substitute.
 
 ## What the deployment reconciles
 
@@ -119,7 +121,7 @@ Write enablement is a separate change with a separate approval. Complete the ste
 7. Verify a completed Appwrite backup, a successful non-production restore, and separate R2 preservation evidence.
 8. Confirm rollback owners, commands, last-known-good versions, monitoring, and budget thresholds. Verify `MAX_GLOBAL_ARTIFACT_BYTES` is no more than 70% of the lower current R2/Appwrite entitlement, never more than 7 GiB, and remains at the conservative 1 GiB default if entitlement evidence is incomplete.
 9. Obtain narrow Cloudflare DNS/WAF authority, resolve and smoke-test `npm.lemonize.cyou`, verify its WAF rule IDs and Durable Object origin admission, and confirm the proxy can be disabled without affecting native registry reads.
-10. Authenticate an npm owner, confirm the npm organization/trusted-publisher relationship, and provision `CLI_R2_API_TOKEN` for the release workflow without adding a long-lived npm credential or broadening Worker/deploy credentials.
+10. Authenticate an npm owner and confirm the npm organization/trusted-publisher relationship without adding a long-lived npm credential.
 11. Obtain explicit production write approval. Change `REGISTRY_MODE` to `public` and `ALLOW_PUBLIC_PUBLISH` to `true` in one reviewed protected-environment change, deploy, and immediately run a GitHub-linked namespace-scoped canary publish.
 
 If any count, identity, digest, provider setting, or blocker is unresolved, keep the new registry read-only. A zero active-token count observed before the freeze is not proof of a freeze; enforcement must precede the final snapshot.

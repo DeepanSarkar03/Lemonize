@@ -94,7 +94,7 @@ app.use('*', async (c, next) => {
 });
 
 app.route('/', health);
-app.route('/', cli); // install.sh, install.ps1, /cli/:channel/:file
+app.route('/', cli); // npm-backed install.sh and install.ps1 bootstraps
 app.route('/', internalScan); // HMAC-authenticated Appwrite scanner protocol
 app.route('/v1', meta);
 app.route('/v1', auth);

@@ -45,7 +45,9 @@ export function ReportPackage({ name, versions }: { name: string; versions: stri
         <p className="flex items-center gap-2 font-medium">
           <CheckCircle size={16} weight="bold" /> Report received
         </p>
-        <p className="mt-1 text-xs leading-5 opacity-80">The registry operator can now review it.</p>
+        <p className="mt-1 text-xs leading-5 opacity-80">
+          The registry operator can now review it.
+        </p>
       </div>
     );
   }
@@ -58,7 +60,9 @@ export function ReportPackage({ name, versions }: { name: string; versions: stri
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="flex items-center gap-1.5"><Flag size={13} weight="bold" /> Report a concern</span>
+        <span className="flex items-center gap-1.5">
+          <Flag size={13} weight="bold" /> Report a concern
+        </span>
         <span aria-hidden>{open ? '−' : '+'}</span>
       </button>
 
@@ -75,7 +79,9 @@ export function ReportPackage({ name, versions }: { name: string; versions: stri
           <SignedIn>
             <form className="space-y-3" onSubmit={submit}>
               <div>
-                <label className="label" htmlFor="report-reason">Reason</label>
+                <label className="label" htmlFor="report-reason">
+                  Reason
+                </label>
                 <select
                   id="report-reason"
                   className="input"
@@ -91,7 +97,9 @@ export function ReportPackage({ name, versions }: { name: string; versions: stri
                 </select>
               </div>
               <div>
-                <label className="label" htmlFor="report-version">Version (optional)</label>
+                <label className="label" htmlFor="report-version">
+                  Version (optional)
+                </label>
                 <select
                   id="report-version"
                   className="input"
@@ -99,11 +107,17 @@ export function ReportPackage({ name, versions }: { name: string; versions: stri
                   onChange={(event) => setVersion(event.target.value)}
                 >
                   <option value="">Entire package</option>
-                  {versions.map((value) => <option key={value} value={value}>{value}</option>)}
+                  {versions.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
-                <label className="label" htmlFor="report-detail">What did you find?</label>
+                <label className="label" htmlFor="report-detail">
+                  What did you find?
+                </label>
                 <textarea
                   id="report-detail"
                   className="input min-h-28 resize-y"
@@ -117,7 +131,11 @@ export function ReportPackage({ name, versions }: { name: string; versions: stri
               {state === 'error' ? (
                 <p className="text-xs leading-5 text-pastel-redText">{message}</p>
               ) : null}
-              <button className="btn w-full justify-center" type="submit" disabled={state === 'sending'}>
+              <button
+                className="btn w-full justify-center"
+                type="submit"
+                disabled={state === 'sending'}
+              >
                 {state === 'sending' ? 'Sending…' : 'Send report'}
               </button>
             </form>

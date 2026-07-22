@@ -15,6 +15,7 @@ import {
   shouldAdoptGithubNamespace,
 } from './account-policy.js';
 import { checkDistributedRateLimit, clientIp } from './ratelimit.js';
+import { activeApiTokenRoot } from './api-token.js';
 
 const ALL_SCOPES: TokenScope[] = ['read', 'publish', 'manage:packages', 'manage:tokens'];
 const NAMESPACE_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -79,6 +80,8 @@ function setIdentity(
     authType: 'clerk' | 'api_token';
     clerkId?: string;
     tokenId?: string;
+    tokenParentId?: string;
+    tokenRootId?: string;
     tokenScopes: TokenScope[];
     tokenExpiresAt?: string;
   },
@@ -92,6 +95,8 @@ function setIdentity(
   c.set('role', role);
   c.set('acceptedTermsVersion', user.acceptedTermsVersion ?? null);
   c.set('tokenId', input.tokenId);
+  c.set('tokenParentId', input.tokenParentId);
+  c.set('tokenRootId', input.tokenRootId);
   c.set('tokenScopes', input.tokenScopes);
   c.set('tokenExpiresAt', input.tokenExpiresAt);
   c.set('authType', input.authType);
@@ -108,8 +113,9 @@ async function authenticateApiToken(c: Context<AppBindings>, token: string): Pro
 
   const repo = registryRepository(c.env);
   const row = await repo.getTokenByHash(tokenHash);
-  const expiresAt = row ? Date.parse(row.expiresAt) : Number.NaN;
-  if (!row || row.revokedAt || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+  if (!row) return false;
+  const rootTokenId = await activeApiTokenRoot(repo, row);
+  if (!rootTokenId) return false;
   const scopes = parseScopes(row.scopes);
   if (!scopes) return false;
   let user = await repo.users.getOrNull(row.userId);
@@ -150,6 +156,8 @@ async function authenticateApiToken(c: Context<AppBindings>, token: string): Pro
   if (!setIdentity(c, user, {
     authType: 'api_token',
     tokenId: row.$id,
+    tokenParentId: row.parentTokenId ?? undefined,
+    tokenRootId: rootTokenId,
     tokenScopes: scopes,
     tokenExpiresAt: row.expiresAt,
   })) {

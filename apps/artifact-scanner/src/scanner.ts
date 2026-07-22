@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { loadConfig } from './config.js';
 import { ScannerError } from './errors.js';
+import { canonicalManifestJson, ManifestJsonError } from './manifest-json.js';
 import { signedHeaders, verifyRequestSignature } from './signing.js';
 import { HARD_MAX_UNPACKED_BYTES, validateGzipTar } from './tar.js';
 import type { ScanJob, ScannerConfig, ScanResult } from './types.js';
@@ -36,27 +37,15 @@ function validIntegrity(value: string): boolean {
   return decoded.byteLength === 64 && decoded.toString('base64') === encoded;
 }
 
-/** Deterministic JSON encoding used to bind declared metadata to package.json. */
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
-    return JSON.stringify(value);
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new ScannerError('rejected', 'invalid_manifest', 422);
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (isRecord(value)) {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
-      .join(',')}}`;
-  }
-  throw new ScannerError('rejected', 'invalid_manifest', 422);
-}
-
 function manifestSha256(manifest: Record<string, unknown>): string {
-  return createHash('sha256').update(canonicalJson(manifest)).digest('hex');
+  try {
+    return createHash('sha256').update(canonicalManifestJson(manifest)).digest('hex');
+  } catch (error) {
+    if (error instanceof ManifestJsonError) {
+      throw new ScannerError('rejected', 'invalid_manifest', 422);
+    }
+    throw error;
+  }
 }
 
 export function parseScanJob(value: unknown, config: ScannerConfig): ScanJob {

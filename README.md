@@ -6,14 +6,13 @@ Lemonize is a public, noncommercial package-distribution beta for JavaScript and
 
 ## CLI
 
-After a CLI release has been published, users can install the standalone binary without npm or Node:
+Install the provenance-enabled CLI package from npm:
 
 ```bash
-curl -fsSL https://registry.lemonize.cyou/install.sh | sh
-irm https://registry.lemonize.cyou/install.ps1 | iex
+npm install --global @lemonize/cli
 ```
 
-Node users may alternatively install `@lemonize/cli`. Typical commands are:
+Typical commands are:
 
 ```bash
 lem login
@@ -62,9 +61,9 @@ flowchart LR
 | Service                       | Responsibility                                                                                                       |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Appwrite TablesDB             | Authoritative users, API-token digests, packages, versions, tags, reservations, scan jobs, quotas, and audit records |
-| Private R2                    | Staged/immutable artifacts, conditional quota locks, and versioned CLI release objects                               |
+| Private R2                    | Staged/immutable registry artifacts and conditional quota locks                                                      |
 | Workers KV                    | Revocation acceleration and metadata cache; never authoritative                                                      |
-| Durable Objects               | Atomic one-time device approvals and globally serialized per-principal fixed-window rate counters                    |
+| Durable Objects               | Atomic device approvals, registry rate limits, and per-client/global npm-origin admission budgets                    |
 | Appwrite function and Storage | Bounded archive validation, antivirus quarantine, and retained accepted recovery copy                                |
 | Clerk                         | Browser identity, active-account status, verified sign-in policy, and GitHub publisher eligibility                   |
 | npm proxy Worker              | Read-only npm route allowlist, edge cache, origin admission budgets, and exact upstream tarball passthrough          |
@@ -82,7 +81,7 @@ There is no D1 binding or D1 query on the current runtime path. D1-related files
 
 The CLI-supplied username is never trusted. In `public` mode, an active Clerk account with a linked GitHub external ID becomes a publisher; accounts without GitHub remain consumers. Administrator authority is assigned only by immutable Clerk subject IDs in `ADMIN_CLERK_IDS`. Clerk must require its configured verification and legal-consent flow.
 
-API tokens are opaque `lem_live_` credentials. Only their SHA-256 digests are stored in TablesDB. Supported scopes are `read`, `publish`, `manage:packages`, and `manage:tokens`; publish and management routes enforce their scopes in addition to package ownership and the user's current role. `read` is currently descriptive/reserved because public reads and `/auth/me` do not gate on it. User-created tokens last 1-90 days, can be listed or revoked with `lem token ...`, and are rechecked against Clerk account status with a bounded KV cache.
+API tokens are opaque `lem_live_` credentials. Only their SHA-256 digests are stored in TablesDB. Supported scopes are `read`, `publish`, `manage:packages`, and `manage:tokens`; publish and management routes enforce their scopes in addition to package ownership and the user's current role. `read` is currently descriptive/reserved because public reads and `/auth/me` do not gate on it. Login/device tokens are independent roots. A root may create 1-90 day children with narrower scopes and expiry, but children cannot receive `manage:tokens` or delegate again. Child authentication revalidates the root, root revocation cascades to its children, and API-token lifecycle operations cannot cross into a sibling root. A fresh Clerk session retains account-wide token control.
 
 ## Publication safety
 
@@ -144,7 +143,6 @@ Production remains `REGISTRY_MODE=read_only` with `ALLOW_PUBLIC_PUBLISH=false`. 
 - obtain narrow Cloudflare DNS/WAF authority missing from the current OAuth session, create the pre-Worker abuse rules, deploy and resolve `npm.lemonize.cyou`, and record passing rate-limit tests;
 - create long-lived, least-privilege Cloudflare and project-scoped Vercel CI tokens. The current OAuth sessions can deploy interactively but cannot mint the required CI tokens;
 - authenticate an npm owner, create/verify the public `@lemonize` organization/package, and configure trusted publishing for `@lemonize/cli`;
-- create the production `CLI_R2_API_TOKEN`, scoped only to writing CLI release objects in the production R2 bucket. It belongs only to the protected `release-cli` job and must not be used by the Worker or general deployment workflow;
 - complete the GitHub-linked staging sign-in, terms, device approval, publish, clean/rejected scan, security-block, and restore drills. Initial Appwrite archives have been requested but are not considered verified until they complete and a non-production restore passes.
 
 Do not enable production writes to work around any of these blockers.

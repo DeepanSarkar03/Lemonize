@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  checks: read
 
 concurrency:
   group: deploy-${{ inputs.environment }}
@@ -44,6 +45,7 @@ jobs:
         with:
           ref: ${{ inputs.git_ref }}
           fetch-depth: 0
+          persist-credentials: false
       - name: Require an immutable commit SHA
         env:
           REQUESTED_SHA: ${{ inputs.git_ref }}
@@ -55,9 +57,12 @@ jobs:
             exit 1
           fi
           test "$(git rev-parse HEAD)" = "${REQUESTED_SHA,,}"
-          if [[ "$DEPLOY_ENV" == production ]] && \
-             ! git merge-base --is-ancestor "${REQUESTED_SHA,,}" origin/main; then
-            echo "production SHA must be reachable from origin/main" >&2
+          git show-ref --verify --quiet refs/remotes/origin/main || {
+            echo "origin/main was not fetched by the immutable checkout" >&2
+            exit 1
+          }
+          if ! git merge-base --is-ancestor "${REQUESTED_SHA,,}" refs/remotes/origin/main; then
+            echo "deployment SHA must be reachable from origin/main" >&2
             exit 1
           fi
           if [[ "$DEPLOY_ENV" != production && "$ENABLE_PRODUCTION_WRITES" == true ]]; then
@@ -82,6 +87,29 @@ jobs:
       - run: pnpm test
       - run: pnpm audit --prod --audit-level high
       - run: pnpm audit --dev --audit-level high
+      - name: Require successful CI for the exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ inputs.git_ref }}
+        run: |
+          required_checks=(
+            'Frozen install, lint, typecheck, build, test'
+            'Audit production dependencies (high/critical)'
+            'Audit development dependencies (high/critical)'
+            'Secret scan (full history)'
+            'Worker dry-run and web build'
+            'Artifact integrity, extraction, and CLI security tests'
+          )
+          for check_name in "${required_checks[@]}"; do
+            successful=$(gh api \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "repos/${GITHUB_REPOSITORY}/commits/${REQUESTED_SHA}/check-runs?per_page=100" \
+              --jq "[.check_runs[] | select(.name == \"$check_name\" and .conclusion == \"success\")] | length")
+            test "$successful" -ge 1 || {
+              echo "Required CI check has not passed for $REQUESTED_SHA: $check_name" >&2
+              exit 1
+            }
+          done
 
   deploy:
     name: Deploy ${{ inputs.environment }}
@@ -96,6 +124,7 @@ jobs:
         with:
           ref: ${{ inputs.git_ref }}
           fetch-depth: 1
+          persist-credentials: false
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
           version: ${{ env.PNPM_VERSION }}

@@ -9,6 +9,7 @@ import {
 import { BrandMark } from '@/components/BrandMark';
 import { CopyBlock } from '@/components/CopyBlock';
 import { TerminalWindow } from '@/components/TerminalWindow';
+import { Badge } from '@/components/tailgrids/core/badge';
 
 const route = [
   {
@@ -62,10 +63,13 @@ export default function Landing() {
                 Global package delivery / edge 01
               </span>
             </div>
-            <p className="mb-5 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-citron">
-              <span className="h-1.5 w-1.5 rounded-full bg-citron" />
+            <Badge
+              color="primary"
+              className="mb-5 border-citron/30 bg-citron/10 text-citron"
+              prefixIcon={<span className="h-1.5 w-1.5 rounded-full bg-citron" />}
+            >
               npm-compatible edge gateway
-            </p>
+            </Badge>
             <h1 className="max-w-[9ch] text-[clamp(3.4rem,7.2vw,6.75rem)] font-medium leading-[0.88] tracking-[-0.075em] text-pulp">
               From origin{' '}
               <span className="font-serif font-medium italic text-citron">to edge.</span>

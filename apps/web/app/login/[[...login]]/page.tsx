@@ -12,30 +12,43 @@ export const dynamic = 'force-dynamic';
 
 export default function LoginPage() {
   return (
-    <section className="grid min-h-[calc(100dvh-14rem)] items-center gap-12 lg:grid-cols-[0.85fr_1fr]">
-      <div className="max-w-md space-y-5">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-lemon-bg text-lemon-text">
+    <section className="grid min-h-[calc(100dvh-14rem)] items-center gap-8 lg:grid-cols-[0.9fr_1fr]">
+      <div className="route-grid max-w-xl rounded-[2rem] bg-carbon p-8 text-pulp sm:p-10 lg:p-12">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-citron text-carbon">
           <LockKey size={20} weight="bold" />
         </div>
-        <div className="space-y-3">
-          <h1 className="display-title text-4xl">Access your registry workspace</h1>
-          <p className="leading-relaxed text-ink-600">
+        <div className="mt-10 space-y-4">
+          <p className="technical-label text-citron">Clerk-secured workspace</p>
+          <h1 className="max-w-sm text-4xl font-medium leading-[0.98] tracking-[-0.055em] text-pulp sm:text-5xl">
+            Access your registry workspace.
+          </h1>
+          <p className="leading-relaxed text-pulp/60">
             Sign in with GitHub to claim an immutable publisher namespace. Your GitHub connection
             establishes publisher eligibility; the registry may still be read-only during
             maintenance.
           </p>
         </div>
-        <p className="text-sm leading-relaxed text-ink-600">
+        <div className="mt-10 grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-white/10 text-xs">
+          <div className="bg-white/[0.04] p-4">
+            <p className="technical-label text-pulp/45">Session</p>
+            <p className="mt-2 text-pulp/75">Passkey + GitHub</p>
+          </div>
+          <div className="bg-white/[0.04] p-4">
+            <p className="technical-label text-pulp/45">Tokens</p>
+            <p className="mt-2 text-pulp/75">Hashed at rest</p>
+          </div>
+        </div>
+        <p className="mt-8 text-sm leading-relaxed text-pulp/55">
           By continuing, you acknowledge the{' '}
           <a
-            className="font-medium text-ink-900 underline decoration-line underline-offset-4 hover:decoration-ink-900"
+            className="font-medium text-pulp underline decoration-white/25 underline-offset-4 hover:decoration-citron"
             href="/terms"
           >
             Terms
           </a>{' '}
           and{' '}
           <a
-            className="font-medium text-ink-900 underline decoration-line underline-offset-4 hover:decoration-ink-900"
+            className="font-medium text-pulp underline decoration-white/25 underline-offset-4 hover:decoration-citron"
             href="/privacy"
           >
             Privacy Policy

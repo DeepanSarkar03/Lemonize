@@ -7,15 +7,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "durable_objects": {
-    "bindings": [
-      { "name": "NPM_ADMISSION_CONTROLLER", "class_name": "NpmAdmissionController" }
-    ]
+    "bindings": [{ "name": "NPM_ADMISSION_CONTROLLER", "class_name": "NpmAdmissionController" }],
   },
   "migrations": [
     {
       "tag": "v1-npm-origin-admission",
-      "new_sqlite_classes": ["NpmAdmissionController"]
-    }
+      "new_sqlite_classes": ["NpmAdmissionController"],
+    },
   ],
   "vars": {
     "NPM_PROXY_ENABLED": "false",
@@ -31,7 +29,15 @@
     "NPM_ORIGIN_AUDIT_MINUTE": "10",
     "NPM_ORIGIN_AUDIT_DAY": "250",
     "NPM_ORIGIN_TARBALL_MINUTE": "800",
-    "NPM_ORIGIN_TARBALL_DAY": "5000"
+    "NPM_ORIGIN_TARBALL_DAY": "5000",
+    "NPM_ORIGIN_CLIENT_METADATA_MINUTE": "400",
+    "NPM_ORIGIN_CLIENT_METADATA_DAY": "2000",
+    "NPM_ORIGIN_CLIENT_SEARCH_MINUTE": "5",
+    "NPM_ORIGIN_CLIENT_SEARCH_DAY": "100",
+    "NPM_ORIGIN_CLIENT_AUDIT_MINUTE": "4",
+    "NPM_ORIGIN_CLIENT_AUDIT_DAY": "100",
+    "NPM_ORIGIN_CLIENT_TARBALL_MINUTE": "400",
+    "NPM_ORIGIN_CLIENT_TARBALL_DAY": "2500",
   },
   "env": {
     "staging": {
@@ -49,14 +55,22 @@
         "NPM_ORIGIN_AUDIT_MINUTE": "10",
         "NPM_ORIGIN_AUDIT_DAY": "250",
         "NPM_ORIGIN_TARBALL_MINUTE": "800",
-        "NPM_ORIGIN_TARBALL_DAY": "5000"
+        "NPM_ORIGIN_TARBALL_DAY": "5000",
+        "NPM_ORIGIN_CLIENT_METADATA_MINUTE": "400",
+        "NPM_ORIGIN_CLIENT_METADATA_DAY": "2000",
+        "NPM_ORIGIN_CLIENT_SEARCH_MINUTE": "5",
+        "NPM_ORIGIN_CLIENT_SEARCH_DAY": "100",
+        "NPM_ORIGIN_CLIENT_AUDIT_MINUTE": "4",
+        "NPM_ORIGIN_CLIENT_AUDIT_DAY": "100",
+        "NPM_ORIGIN_CLIENT_TARBALL_MINUTE": "400",
+        "NPM_ORIGIN_CLIENT_TARBALL_DAY": "2500",
       },
       "durable_objects": {
         "bindings": [
-          { "name": "NPM_ADMISSION_CONTROLLER", "class_name": "NpmAdmissionController" }
-        ]
+          { "name": "NPM_ADMISSION_CONTROLLER", "class_name": "NpmAdmissionController" },
+        ],
       },
-      "routes": [{ "pattern": "npm-staging.lemonize.cyou", "custom_domain": true }]
+      "routes": [{ "pattern": "npm-staging.lemonize.cyou", "custom_domain": true }],
     },
     "production": {
       "vars": {
@@ -73,14 +87,22 @@
         "NPM_ORIGIN_AUDIT_MINUTE": "10",
         "NPM_ORIGIN_AUDIT_DAY": "250",
         "NPM_ORIGIN_TARBALL_MINUTE": "800",
-        "NPM_ORIGIN_TARBALL_DAY": "5000"
+        "NPM_ORIGIN_TARBALL_DAY": "5000",
+        "NPM_ORIGIN_CLIENT_METADATA_MINUTE": "400",
+        "NPM_ORIGIN_CLIENT_METADATA_DAY": "2000",
+        "NPM_ORIGIN_CLIENT_SEARCH_MINUTE": "5",
+        "NPM_ORIGIN_CLIENT_SEARCH_DAY": "100",
+        "NPM_ORIGIN_CLIENT_AUDIT_MINUTE": "4",
+        "NPM_ORIGIN_CLIENT_AUDIT_DAY": "100",
+        "NPM_ORIGIN_CLIENT_TARBALL_MINUTE": "400",
+        "NPM_ORIGIN_CLIENT_TARBALL_DAY": "2500",
       },
       "durable_objects": {
         "bindings": [
-          { "name": "NPM_ADMISSION_CONTROLLER", "class_name": "NpmAdmissionController" }
-        ]
+          { "name": "NPM_ADMISSION_CONTROLLER", "class_name": "NpmAdmissionController" },
+        ],
       },
-      "routes": [{ "pattern": "npm.lemonize.cyou", "custom_domain": true }]
-    }
-  }
+      "routes": [{ "pattern": "npm.lemonize.cyou", "custom_domain": true }],
+    },
+  },
 }

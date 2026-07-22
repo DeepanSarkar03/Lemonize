@@ -232,6 +232,24 @@
                     "encrypt": false
                 },
                 {
+                    "key": "parentTokenId",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 36,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
+                    "key": "rootTokenId",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 36,
+                    "default": null,
+                    "encrypt": false
+                },
+                {
                     "key": "tokenHash",
                     "type": "varchar",
                     "required": true,
@@ -308,6 +326,16 @@
                     "status": "available",
                     "columns": [
                         "userId"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "tokens_root",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "userId",
+                        "rootTokenId"
                     ],
                     "orders": []
                 },

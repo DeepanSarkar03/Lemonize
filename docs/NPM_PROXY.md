@@ -60,9 +60,11 @@ Limits are 16 MiB per packument, 100 MiB per tarball, 4 MiB per search response,
 
 ## Origin admission and WAF
 
-Cache misses pass through a Durable Object admission controller before npmjs is contacted. The controller hashes the client IP, serializes a global ledger, and enforces per-IP, global minute/day, and route-specific metadata/search/audit/tarball origin budgets. The Worker rechecks the edge cache after admission so another request that completed the same fill can prevent a duplicate npm fetch. A denied miss returns `429` with `Retry-After`; unavailable or corrupt admission state fails closed with `503`. Initial cache hits do not consume an origin-admission slot.
+Cache misses pass through a Durable Object admission controller before npmjs is contacted. The controller hashes IPv4 clients and IPv6 `/64` network identities, applies per-client route minute/day limits first, then serializes the existing global per-IP, minute/day, and route-specific metadata/search/audit/tarball budgets. A client-side denial therefore does not consume the shared route budget. The Worker rechecks the edge cache after admission so another request that completed the same fill can prevent a duplicate npm fetch. A denied miss returns `429` with `Retry-After`; unavailable, corrupt, or invalidly configured admission state fails closed with `503`. Initial cache hits do not consume an origin-admission slot.
 
-The checked-in starter budgets are intentionally conservative and may be lowered without changing the public API. They protect npmjs and free-tier origin traffic; they do not cap requests that terminate at the Worker or replace Cloudflare account-level usage monitoring.
+Each per-client Durable Object schedules deletion just after its UTC daily window. The alarm removes its complete ledger, preventing a stream of one-off client identities from accumulating permanent rate-limit storage.
+
+The checked-in per-client route defaults are metadata `400/minute` and `2,000/day`, search `5/minute` and `100/day`, audit `4/minute` and `100/day`, and tarball `400/minute` and `2,500/day`. Each `NPM_ORIGIN_CLIENT_*` value must remain strictly below its corresponding global route budget or admission fails closed. These conservative budgets may be lowered without changing the public API. They protect npmjs and free-tier origin traffic; they do not cap requests that terminate at the Worker or replace Cloudflare account-level usage monitoring.
 
 Before production enablement, configure Cloudflare WAF/rate-limiting rules for `npm.lemonize.cyou` to block malformed or abusive traffic before Worker execution, exempt only the supported methods/routes, and verify normal npm, pnpm, Yarn, audit, HEAD, and Range traffic is not challenged. WAF configuration is provider-side and is not created by `wrangler.jsonc`; its rule IDs and a passing test record belong in the deployment evidence.
 
@@ -78,6 +80,6 @@ Test both the allow and deny cases after every rule change. The Worker's own rou
 
 ## Failure and privacy behavior
 
-Upstream `404` and `429` responses retain npm-compatible status semantics. Proxy timeouts and validation failures use `502` or `504`, are never cached, and include `X-Request-Id`. Audit bodies are forwarded only to `https://registry.npmjs.org`, never cached or logged, and remain subject to npm's privacy and usage terms.
+Upstream `404` and `429` responses retain npm-compatible status semantics. Proxy timeouts and validation failures use `502` or `504`, are never cached, and include `X-Request-Id`. Audit admission happens before the Worker reads or buffers the request body. Admitted audit bodies are forwarded only to `https://registry.npmjs.org`, never cached or logged, and remain subject to npm's privacy and usage terms.
 
 Standard npm clients may execute package lifecycle scripts. That is npm client behavior; the `lem` installer continues to disable lifecycle scripts.

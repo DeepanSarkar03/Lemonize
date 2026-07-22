@@ -185,6 +185,24 @@ export class RegistryAppwriteRepository {
     });
   }
 
+  listTokensByRoot(
+    userId: string,
+    rootTokenId: string,
+    options: ListRowsOptions & { activeOnly?: boolean } = {},
+  ): Promise<AppwriteRowList<ApiTokenData>> {
+    const { activeOnly = false, ...listOptions } = options;
+    return this.tokens.list({
+      ...listOptions,
+      queries: [
+        AppwriteQuery.equal('userId', userId),
+        AppwriteQuery.equal('rootTokenId', rootTokenId),
+        ...(activeOnly ? [AppwriteQuery.isNull('revokedAt')] : []),
+        AppwriteQuery.orderDesc('$createdAt'),
+        ...(listOptions.queries ?? []),
+      ],
+    });
+  }
+
   revokeToken(rowId: string, revokedAt = new Date().toISOString()): Promise<AppwriteRow<ApiTokenData>> {
     return this.tokens.update(rowId, { revokedAt });
   }
@@ -330,6 +348,7 @@ export class RegistryAppwriteRepository {
       ...options,
       queries: [
         AppwriteQuery.lessThanEqual('expiresAt', before),
+        AppwriteQuery.orderAsc('$updatedAt'),
         ...(options.queries ?? []),
       ],
     });

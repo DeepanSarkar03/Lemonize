@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Check } from '@phosphor-icons/react/dist/ssr';
+import { Button } from '@/components/tailgrids/core/button';
 
 export function CopyBlock({ text, label }: { text: string; label?: string }) {
   const [status, setStatus] = useState<'idle' | 'copied' | 'error'>('idle');
@@ -32,15 +33,17 @@ export function CopyBlock({ text, label }: { text: string; label?: string }) {
       <code className="tnum min-w-0 overflow-x-auto whitespace-nowrap font-mono text-xs text-ink-900 sm:text-sm">
         {label ?? text}
       </code>
-      <button
+      <Button
         type="button"
-        className="hit-slop group flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-ink-600 transition-colors duration-150 ease-out hover:text-ink-900 active:scale-95"
+        variant="ghost"
+        size="xs"
+        className="hit-slop !min-h-8 shrink-0 gap-1.5 px-2 py-1 text-xs"
         onClick={() => void copy()}
         aria-label={status === 'copied' ? 'Copied to clipboard' : 'Copy to clipboard'}
       >
         {status === 'copied' ? <Check size={13} weight="bold" /> : <Copy size={13} weight="bold" />}
         {status === 'copied' ? 'copied' : status === 'error' ? 'retry' : 'copy'}
-      </button>
+      </Button>
       <span className="sr-only" aria-live="polite">
         {status === 'copied'
           ? 'Copied to clipboard.'

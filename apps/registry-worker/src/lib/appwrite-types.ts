@@ -38,6 +38,10 @@ export interface UserData {
 
 export interface ApiTokenData {
   userId: string;
+  /** Direct creator token. Null for Clerk/device-issued root credentials. */
+  parentTokenId?: string | null;
+  /** Root credential for this lineage. New roots point to their own row id. */
+  rootTokenId?: string | null;
   tokenHash: string;
   prefix: string;
   label: string;

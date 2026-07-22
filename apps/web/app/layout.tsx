@@ -7,6 +7,7 @@ import { ClerkProvider } from '@clerk/nextjs';
 import Link from 'next/link';
 import { Nav } from '@/components/Nav';
 import { BrandMark } from '@/components/BrandMark';
+import { Analytics } from '@vercel/analytics/next';
 
 const editorial = Newsreader({
   subsets: ['latin'],
@@ -14,6 +15,11 @@ const editorial = Newsreader({
   style: ['italic', 'normal'],
   variable: '--font-editorial',
 });
+
+// A per-request CSP nonce can only be attached to Next.js script tags during
+// dynamic rendering. Keep every page behind this layout dynamic so the nonce
+// in the response header always matches every executable framework script.
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://lemonize.cyou'),
@@ -42,6 +48,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider
+      dynamic
       signInUrl="/login"
       afterSignOutUrl="/"
       appearance={{
@@ -107,6 +114,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
           </footer>
+          <Analytics />
         </body>
       </html>
     </ClerkProvider>

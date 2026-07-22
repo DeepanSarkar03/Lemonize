@@ -116,4 +116,22 @@ describe('authenticated CLI commands', () => {
       scopes: ['read', 'publish'],
     });
   });
+
+  it('rejects token-management delegation before making a request', async () => {
+    vi.stubEnv('LEMONIZE_HOME', tmp());
+    vi.stubEnv('LEMONIZE_REGISTRY', REGISTRY);
+    vi.stubEnv('LEMONIZE_TOKEN', 'lem_live_manager');
+    const fetcher = vi.fn();
+    globalThis.fetch = fetcher as unknown as typeof fetch;
+    vi.resetModules();
+    const { cmdTokenCreate } = await import('../src/commands.js');
+
+    await expect(
+      cmdTokenCreate('delegated-manager', {
+        registry: REGISTRY,
+        scopes: ['manage:tokens'],
+      }),
+    ).rejects.toThrow('CLI-created tokens may use read, publish, or manage:packages');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });

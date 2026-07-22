@@ -32,6 +32,12 @@ import type {
 } from '../lib/appwrite-types.js';
 import type { RegistryAppwriteRepository } from '../lib/appwrite-repository.js';
 import { globalArtifactQuotaUsage, publisherQuotaUsage } from '../lib/publisher-usage.js';
+import { canonicalStoredManifest } from '../lib/manifest-json.js';
+import { listExpiredReservationCandidates } from '../lib/reservation-cleanup.js';
+import {
+  rejectInvalidStagedManifest,
+  type InvalidManifestRejectionResult,
+} from '../lib/staging-lifecycle.js';
 import {
   assertPublishingIdentity,
   assertGlobalArtifactQuota,
@@ -82,6 +88,31 @@ interface ScannerResult {
   fileCount?: number;
   unpackedSize?: number;
   quarantineFileId?: string;
+}
+
+class ManifestPreparationError extends Error {
+  constructor() {
+    super('Stored manifest is invalid.');
+    this.name = 'ManifestPreparationError';
+  }
+}
+
+function reportIncompleteManifestRejection(
+  source: 'scheduled_retry' | 'publish_finalize' | 'scanner_result',
+  result: InvalidManifestRejectionResult,
+  jobId: string,
+  versionId: string,
+): void {
+  if (result.complete) return;
+  // Never log provider errors or object keys; operation labels and row IDs are
+  // sufficient to alert operators without leaking credentials or package data.
+  console.error('Invalid-manifest rejection is incomplete.', {
+    source,
+    jobId,
+    versionId,
+    failedOperations: result.failedOperations,
+    stagingDeleted: result.stagingDeleted,
+  });
 }
 
 function actor(c: Context<AppBindings>): { userId: string; namespace: string } {
@@ -330,7 +361,15 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
   for (const job of jobs.rows.slice(0, Math.max(0, Math.min(limit, 10)))) {
     if (!['pending', 'retry', 'dispatching', 'queued', 'running'].includes(job.status)) continue;
     const version = await repo.versions.getOrNull(job.versionId);
-    if (!version || !['scanning', 'published'].includes(version.status)) continue;
+    const incompleteInvalidManifestRejection =
+      version?.status === 'rejected' && version.scanError === 'invalid_manifest';
+    if (
+      !version ||
+      (!['scanning', 'published'].includes(version.status) &&
+        !incompleteInvalidManifestRejection)
+    ) {
+      continue;
+    }
     const pkg = await repo.packages.getOrNull(version.packageId);
     if (!pkg) continue;
     if (version.status === 'published') {
@@ -358,6 +397,23 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
       }
       continue;
     }
+    if (incompleteInvalidManifestRejection) {
+      const reservation = await repo.getReservation(version.packageId, version.version);
+      const rejection = await rejectInvalidStagedManifest({
+        bucket: env.BUCKET,
+        repo,
+        job,
+        version,
+        reservation,
+      });
+      reportIncompleteManifestRejection(
+        'scheduled_retry',
+        rejection,
+        job.$id,
+        version.$id,
+      );
+      continue;
+    }
     if (job.attempts >= 3) {
       await repo.failScanJob(job.$id, job.attempts, 'scan_result_timeout', null);
       await repo.versions.update(version.$id, {
@@ -368,6 +424,27 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
       if (reservation) await repo.reservations.update(reservation.$id, { status: 'failed' });
       continue;
     }
+    let payload: ScanJobPayload;
+    try {
+      payload = await scanPayload(job.$id, version, pkg);
+    } catch (error) {
+      if (!(error instanceof ManifestPreparationError)) throw error;
+      const reservation = await repo.getReservation(version.packageId, version.version);
+      const rejection = await rejectInvalidStagedManifest({
+        bucket: env.BUCKET,
+        repo,
+        job,
+        version,
+        reservation,
+      });
+      reportIncompleteManifestRejection(
+        'scheduled_retry',
+        rejection,
+        job.$id,
+        version.$id,
+      );
+      continue;
+    }
     let accepted = false;
     try {
       await repo.scanJobs.update(job.$id, {
@@ -375,7 +452,7 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
         attempts: job.attempts + 1,
         nextAttemptAt: new Date(Date.now() + 2 * 60_000).toISOString(),
       });
-      await dispatchScanner(env, await scanPayload(job.$id, version, pkg));
+      await dispatchScanner(env, payload);
       accepted = true;
       const current = await repo.scanJobs.getOrNull(job.$id);
       if (current?.status === 'dispatching') {
@@ -413,20 +490,28 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
 /** Two-phase expiry avoids racing an in-flight upload: one scheduled pass marks
  * the capability dead, and a later pass removes its private object and rows. */
 export async function cleanupExpiredReservations(env: Env, limit = 20): Promise<number> {
+  const actionLimit = Math.max(0, Math.min(limit, 50));
+  if (actionLimit === 0) return 0;
   const repo = registryRepository(env);
-  const reservations = await repo.listExpiredReservations(new Date().toISOString(), {
-    total: false,
-  });
+  const reservations = await listExpiredReservationCandidates(
+    repo,
+    new Date().toISOString(),
+    Math.min(500, Math.max(100, actionLimit * 50)),
+  );
   let cleaned = 0;
-  for (const reservation of reservations.rows.slice(0, Math.max(0, Math.min(limit, 50)))) {
+  let actions = 0;
+  for (const reservation of reservations) {
+    if (actions >= actionLimit) break;
     if (['awaiting_upload', 'uploading', 'uploaded'].includes(reservation.status)) {
       await repo.reservations.update(reservation.$id, { status: 'expired' });
+      actions += 1;
       continue;
     }
     if (reservation.status === 'failed') {
       const failedAt = Date.parse(reservation.$updatedAt);
       if (Number.isFinite(failedAt) && failedAt > Date.now() - 24 * 60 * 60 * 1_000) continue;
       await repo.reservations.update(reservation.$id, { status: 'expired' });
+      actions += 1;
       continue;
     }
     if (reservation.status === 'scanning') {
@@ -438,47 +523,71 @@ export async function cleanupExpiredReservations(env: Env, limit = 20): Promise<
       const job = version ? await repo.getScanJobByVersionId(version.$id) : null;
       if (!version) {
         await repo.reservations.update(reservation.$id, { status: 'expired' });
+        actions += 1;
       } else if (!job || job.status === 'failed') {
         await repo.versions.update(version.$id, {
           status: 'failed',
           scanError: 'scan_job_orphaned',
         });
         await repo.reservations.update(reservation.$id, { status: 'expired' });
+        actions += 1;
       }
       continue;
     }
     if (reservation.status === 'expired') {
+      try {
+        await env.BUCKET.delete(reservation.stagingKey);
+      } catch {
+        // Keep the reservation row so retained bytes remain quota-accounted.
+        continue;
+      }
       const version = await repo.getVersion(reservation.packageId, reservation.version);
       if (version && ['reserved', 'failed'].includes(version.status)) {
-        await deleteQuarantineFile(
-          env,
-          version.archiveFileId ?? `scan-${version.shasum.toLowerCase().slice(0, 30)}`,
-        ).catch(() => undefined);
+        try {
+          await deleteQuarantineFile(
+            env,
+            version.archiveFileId ?? `scan-${version.shasum.toLowerCase().slice(0, 30)}`,
+          );
+        } catch {
+          // Keep all accounting rows until every physical copy is gone.
+          continue;
+        }
         const job = await repo.getScanJobByVersionId(version.$id);
         if (job) await repo.scanJobs.delete(job.$id);
         await repo.versions.delete(version.$id);
       }
-      await env.BUCKET.delete(reservation.stagingKey).catch(() => undefined);
       await repo.reservations.delete(reservation.$id);
+      actions += 1;
       cleaned += 1;
       continue;
     }
     if (['completed', 'rejected'].includes(reservation.status)) {
+      try {
+        await env.BUCKET.delete(reservation.stagingKey);
+      } catch {
+        // Never orphan an unaccounted staging object by deleting its row first.
+        continue;
+      }
       const version = await repo.getVersion(reservation.packageId, reservation.version);
       if (version) {
         // Keep the antivirus-accepted Appwrite copy for published versions as
         // an independent recovery source. Rejected bytes are never retained.
         if (reservation.status === 'rejected') {
-          await deleteQuarantineFile(
-            env,
-            version.archiveFileId ?? `scan-${version.shasum.toLowerCase().slice(0, 30)}`,
-          ).catch(() => undefined);
+          try {
+            await deleteQuarantineFile(
+              env,
+              version.archiveFileId ?? `scan-${version.shasum.toLowerCase().slice(0, 30)}`,
+            );
+          } catch {
+            // Keep all accounting rows until every physical copy is gone.
+            continue;
+          }
         }
         const job = await repo.getScanJobByVersionId(version.$id);
         if (job) await repo.scanJobs.delete(job.$id);
       }
-      await env.BUCKET.delete(reservation.stagingKey).catch(() => undefined);
       await repo.reservations.delete(reservation.$id);
+      actions += 1;
       cleaned += 1;
     }
   }
@@ -494,28 +603,15 @@ export async function maintainPublishingState(env: Env): Promise<{
   return { scansDispatched, reservationsCleaned };
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
-    return JSON.stringify(value);
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error('Stored manifest is not valid JSON data.');
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-      .join(',')}}`;
-  }
-  throw new Error('Stored manifest is not valid JSON data.');
-}
-
 async function declaredManifestSha256(manifestJson: string): Promise<string> {
-  const parsed = JSON.parse(manifestJson) as unknown;
-  return sha256Hex(new TextEncoder().encode(canonicalJson(parsed)));
+  let encoded: string;
+  try {
+    const parsed = JSON.parse(manifestJson) as unknown;
+    encoded = canonicalStoredManifest(parsed);
+  } catch {
+    throw new ManifestPreparationError();
+  }
+  return sha256Hex(new TextEncoder().encode(encoded));
 }
 
 async function scanPayload(
@@ -1075,6 +1171,30 @@ publish.post(
         if (!job) throw error;
       }
     }
+    let payload: ScanJobPayload;
+    try {
+      payload = await scanPayload(job.$id, version, pkg);
+    } catch (error) {
+      if (!(error instanceof ManifestPreparationError)) throw error;
+      const rejection = await rejectInvalidStagedManifest({
+        bucket: c.env.BUCKET,
+        repo,
+        job,
+        version,
+        reservation,
+      });
+      reportIncompleteManifestRejection(
+        'publish_finalize',
+        rejection,
+        job.$id,
+        version.$id,
+      );
+      throw new LemonizeError(
+        422,
+        ErrorCodes.VALIDATION_FAILED,
+        'The stored package manifest is invalid.',
+      );
+    }
     if (job.status === 'failed' && job.attempts >= 3) {
       throw conflict(
         ErrorCodes.CONFLICT,
@@ -1091,7 +1211,7 @@ publish.post(
           attempts: job.attempts + 1,
           nextAttemptAt: new Date(Date.now() + 2 * 60_000).toISOString(),
         });
-        await dispatchScanner(c.env, await scanPayload(job.$id, version, pkg));
+        await dispatchScanner(c.env, payload);
         accepted = true;
         const current = await repo.scanJobs.getOrNull(job.$id);
         if (current?.status === 'dispatching') {
@@ -1275,12 +1395,33 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
     return c.json({ ok: true, status: 'rejected' });
   }
 
+  let declaredManifestHash: string;
+  try {
+    declaredManifestHash = await declaredManifestSha256(version.manifest);
+  } catch (error) {
+    if (!(error instanceof ManifestPreparationError)) throw error;
+    const rejection = await rejectInvalidStagedManifest({
+      bucket: c.env.BUCKET,
+      repo,
+      job,
+      version,
+      reservation,
+    });
+    reportIncompleteManifestRejection(
+      'scanner_result',
+      rejection,
+      job.$id,
+      version.$id,
+    );
+    return c.json({ ok: true, status: 'rejected' });
+  }
+
   if (
     !timingSafeEqual(result.shasum!.toLowerCase(), version.shasum.toLowerCase()) ||
     !timingSafeEqual(result.integrity!, version.integrity) ||
     !timingSafeEqual(
       result.manifestSha256!.toLowerCase(),
-      await declaredManifestSha256(version.manifest),
+      declaredManifestHash,
     ) ||
     result.fileCount !== version.fileCount ||
     result.unpackedSize !== version.unpackedSize

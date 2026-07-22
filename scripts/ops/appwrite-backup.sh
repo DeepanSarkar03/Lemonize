@@ -45,7 +45,8 @@ case "$operation" in
           --name "Lemonize daily backup" \
           --retention "$APPWRITE_BACKUP_RETENTION_DAYS" \
           --schedule "$APPWRITE_BACKUP_SCHEDULE" \
-          --enabled true
+          --enabled true > "$HOME/policy-updated.json"
+        echo "Appwrite backup policy configuration was reconciled"
         ;;
       missing)
         "$APPWRITE_BIN" --json backups create-policy \
@@ -54,7 +55,8 @@ case "$operation" in
           --retention "$APPWRITE_BACKUP_RETENTION_DAYS" \
           --schedule "$APPWRITE_BACKUP_SCHEDULE" \
           --name "Lemonize daily backup" \
-          --enabled true
+          --enabled true > "$HOME/policy-created.json"
+        echo "Appwrite backup policy was created"
         ;;
       *)
         echo "Existing policy $APPWRITE_BACKUP_POLICY_ID has unexpected services or is resource-scoped; review and replace it explicitly" >&2
@@ -69,7 +71,6 @@ case "$operation" in
       const fs = require("node:fs");
       const [path, schedule, retention] = process.argv.slice(1);
       const policy = JSON.parse(fs.readFileSync(path, "utf8"));
-      console.log(JSON.stringify(policy, null, 2));
       const expected = ["functions", "storage", "tablesdb"];
       const actual = [...(policy.services ?? [])].sort();
       if (!policy.enabled || policy.schedule !== schedule || policy.retention !== Number(retention) ||
@@ -77,6 +78,7 @@ case "$operation" in
         console.error("Appwrite backup policy does not match the required schedule, retention, or services");
         process.exit(1);
       }
+      console.log("Appwrite backup policy configuration is valid");
     ' "$policy_file" "$APPWRITE_BACKUP_SCHEDULE" "$APPWRITE_BACKUP_RETENTION_DAYS"
     archives_file="$HOME/archives.json"
     "$APPWRITE_BIN" --json backups list-archives --sort-desc '$createdAt' --limit 5 > "$archives_file"
@@ -84,7 +86,6 @@ case "$operation" in
       const fs = require("node:fs");
       const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
       const archives = data.archives ?? [];
-      console.log(JSON.stringify(data, null, 2));
       const latest = archives.find((archive) => archive.status === "completed");
       if (!latest) {
         console.error("No completed Appwrite archive was found in the five newest archives");
@@ -100,10 +101,18 @@ case "$operation" in
         console.error("Newest completed Appwrite archive is stale, empty, or does not cover all required services");
         process.exit(1);
       }
+      console.log("Latest completed Appwrite archive is healthy");
     ' "$archives_file"
     ;;
   create)
-    "$APPWRITE_BIN" --json backups create-archive --services tablesdb functions storage
+    archive_file="$HOME/archive-created.json"
+    "$APPWRITE_BIN" --json backups create-archive --services tablesdb functions storage > "$archive_file"
+    node -e '
+      const fs = require("node:fs");
+      const archive = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      if (!archive.$id) process.exit(1);
+      console.log("Appwrite backup archive creation was accepted");
+    ' "$archive_file"
     ;;
   *)
     echo "usage: $0 <reconcile|verify|create>" >&2
