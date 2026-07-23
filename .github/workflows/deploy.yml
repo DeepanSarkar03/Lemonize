@@ -209,8 +209,8 @@ jobs:
           # Project settings require a console session and are intentionally
           # excluded from API-key deployments. Scanner deployment is handled
           # by the following, separately scoped reconciliation step.
-          HOME="$appwrite_home" appwrite --force push buckets
-          HOME="$appwrite_home" appwrite --force push tables
+          HOME="$appwrite_home" appwrite --force --all push buckets
+          HOME="$appwrite_home" appwrite --force --all push tables
 
       - name: Reconcile and deploy Appwrite artifact scanner
         env:

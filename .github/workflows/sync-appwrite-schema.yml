@@ -134,5 +134,5 @@ jobs:
           # API keys cannot push console-only project settings. Keep this job
           # limited to the declarative resources required by the registry; the
           # scanner function is reconciled by the protected deploy workflow.
-          HOME="$appwrite_home" appwrite --force push buckets
-          HOME="$appwrite_home" appwrite --force push tables
+          HOME="$appwrite_home" appwrite --force --all push buckets
+          HOME="$appwrite_home" appwrite --force --all push tables
