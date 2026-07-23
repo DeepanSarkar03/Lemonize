@@ -49,6 +49,7 @@ import {
   scannerSignedHeaders,
   verifyScannerSignature,
 } from '../lib/publish-security.js';
+import { appwriteApiBaseUrl } from '../lib/url.js';
 
 export const publish = new Hono<AppBindings>();
 /** Mounted at `/`, not `/v1`, so the Appwrite scanner has a stable private protocol path. */
@@ -278,17 +279,12 @@ function streamWithLimit(
   );
 }
 
-function appwriteBase(endpoint: string): string {
-  const normalized = endpoint.replace(/\/+$/, '');
-  return normalized.endsWith('/v1') ? normalized : `${normalized}/v1`;
-}
-
 async function deleteQuarantineFile(env: Env, fileId: string | null | undefined): Promise<void> {
   if (!fileId || !SAFE_FILE_ID.test(fileId)) return;
   const bucketId = env.APPWRITE_QUARANTINE_BUCKET_ID || 'quarantine';
   if (!SAFE_FILE_ID.test(bucketId)) return;
   const response = await fetch(
-    `${appwriteBase(env.APPWRITE_ENDPOINT)}/storage/buckets/${encodeURIComponent(bucketId)}/files/${encodeURIComponent(fileId)}`,
+    `${appwriteApiBaseUrl(env.APPWRITE_ENDPOINT)}/storage/buckets/${encodeURIComponent(bucketId)}/files/${encodeURIComponent(fileId)}`,
     {
       method: 'DELETE',
       headers: {
@@ -319,7 +315,7 @@ async function dispatchScanner(env: Env, payload: ScanJobPayload): Promise<void>
     body: bytes,
   });
   const response = await fetch(
-    `${appwriteBase(env.APPWRITE_ENDPOINT)}/functions/${encodeURIComponent(functionId)}/executions`,
+    `${appwriteApiBaseUrl(env.APPWRITE_ENDPOINT)}/functions/${encodeURIComponent(functionId)}/executions`,
     {
       method: 'POST',
       headers: {

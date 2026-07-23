@@ -311,7 +311,11 @@ describe('artifact scanner function', () => {
       throw new Error('unexpected URL');
     };
 
-    const response = await handleScanRequest(signedJobRequest(job), config(fetcher));
+    const scannerConfig = config(fetcher);
+    const adversarialSuffix = '/'.repeat(250_000);
+    scannerConfig.registryInternalUrl += adversarialSuffix;
+    scannerConfig.appwriteEndpoint += adversarialSuffix;
+    const response = await handleScanRequest(signedJobRequest(job), scannerConfig);
     const responseBody = (await response.json()) as { result: Record<string, unknown> };
 
     expect(response.status).toBe(200);

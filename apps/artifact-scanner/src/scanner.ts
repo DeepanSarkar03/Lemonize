@@ -11,6 +11,12 @@ const MAX_JOB_BODY_BYTES = 64 * 1024;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$/;
 const SHA256 = /^[a-f0-9]{64}$/i;
 
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 0x2f) end -= 1;
+  return end === value.length ? value : value.slice(0, end);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -87,7 +93,7 @@ export function parseScanJob(value: unknown, config: ScannerConfig): ScanJob {
 }
 
 function registryJobUrl(config: ScannerConfig, jobId: string, resource: 'artifact' | 'result'): string {
-  const base = `${config.registryInternalUrl.replace(/\/+$/, '')}/`;
+  const base = `${stripTrailingSlashes(config.registryInternalUrl)}/`;
   return new URL(
     `internal/v1/scan-jobs/${encodeURIComponent(jobId)}/${resource}`,
     base,
@@ -169,7 +175,7 @@ function verifyDigests(archive: Uint8Array, job: ScanJob): { shasum: string; int
 }
 
 function appwriteBase(config: ScannerConfig): string {
-  const endpoint = config.appwriteEndpoint.replace(/\/+$/, '');
+  const endpoint = stripTrailingSlashes(config.appwriteEndpoint);
   return endpoint.endsWith('/v1') ? endpoint : `${endpoint}/v1`;
 }
 

@@ -2,6 +2,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiClientError, LemonizeClient } from '../src/api-client.js';
 
 describe('LemonizeClient protocol details', () => {
+  it('normalizes trailing slashes in linear time for adversarial registry input', async () => {
+    const repeatedSlashes = '/'.repeat(100_000);
+    const registry = `https://registry.example.test/${repeatedSlashes}suffix///`;
+    const fetchMock = vi.fn(async (_input: Request | string | URL) => new Response('{}'));
+    const client = new LemonizeClient({
+      registry,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    await client.limits();
+
+    const request = fetchMock.mock.calls[0]?.[0];
+    expect(request).toBe(`${registry.slice(0, -3)}/v1/limits`);
+  });
+
   it('sends caller-generated publish idempotency keys', async () => {
     const fetchMock = vi.fn(
       async () =>

@@ -20,6 +20,12 @@ export interface ClientOptions {
   userAgent?: string;
 }
 
+function removeTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return end === value.length ? value : value.slice(0, end);
+}
+
 export class ApiClientError extends Error {
   constructor(
     public readonly status: number,
@@ -47,7 +53,7 @@ export class LemonizeClient {
   private readonly ua: string;
 
   constructor(opts: ClientOptions) {
-    this.base = opts.registry.replace(/\/+$/, '');
+    this.base = removeTrailingSlashes(opts.registry);
     this.token = opts.token ?? null;
     this.f = opts.fetchImpl ?? fetch;
     this.ua = opts.userAgent ?? 'lemonize-client';
