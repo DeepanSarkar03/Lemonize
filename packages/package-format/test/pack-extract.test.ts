@@ -209,10 +209,10 @@ describe('extract rejects malicious / malformed archives', () => {
 describe('pack rejects root escapes and secrets', () => {
   it('handles separator-heavy secret-like names without regex backtracking', async () => {
     const src = tmp();
-    // Keep each path under the manifest's 1,024-character limit while still
-    // providing hundreds of ambiguous separator positions to a backtracking
+    // Keep each filename below the portable 255-byte component limit while
+    // still presenting many ambiguous separator positions to a backtracking
     // implementation.
-    const separators = '--'.repeat(450);
+    const separators = '--'.repeat(96);
     writeFileSync(
       join(src, 'package.json'),
       JSON.stringify({
