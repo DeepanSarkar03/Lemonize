@@ -3,6 +3,7 @@ import type {
   KVNamespace,
   R2Bucket,
 } from '@cloudflare/workers-types';
+import { stripTrailingSlashes } from './url.js';
 
 export interface Env {
   KV: KVNamespace;
@@ -90,14 +91,14 @@ export function loadConfig(env: Env): Config {
     ),
     rateLimitReadsPerMinute: int(env.RATE_LIMIT_READS_PER_MINUTE, 600),
     rateLimitWritesPerMinute: int(env.RATE_LIMIT_WRITES_PER_MINUTE, 60),
-    registryBaseUrl: (env.REGISTRY_BASE_URL || 'http://127.0.0.1:8787').replace(/\/+$/, ''),
-    webBaseUrl: (env.WEB_BASE_URL || 'http://127.0.0.1:3000').replace(/\/+$/, ''),
+    registryBaseUrl: stripTrailingSlashes(env.REGISTRY_BASE_URL || 'http://127.0.0.1:8787'),
+    webBaseUrl: stripTrailingSlashes(env.WEB_BASE_URL || 'http://127.0.0.1:3000'),
     corsAllowedOrigins: list(env.CORS_ALLOWED_ORIGINS),
     registryMode: mode,
     // Administrator authority is bound to Clerk's immutable subject, never a
     // mutable email address or GitHub username.
     adminClerkIds: list(env.ADMIN_CLERK_IDS),
-    clerkIssuer: (env.CLERK_ISSUER || '').replace(/\/+$/, ''),
+    clerkIssuer: stripTrailingSlashes(env.CLERK_ISSUER || ''),
     clerkAuthorizedParties: list(env.CLERK_AUTHORIZED_PARTIES),
   };
 }
