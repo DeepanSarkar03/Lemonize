@@ -207,6 +207,25 @@ describe('extract rejects malicious / malformed archives', () => {
 });
 
 describe('pack rejects root escapes and secrets', () => {
+  it('handles separator-heavy secret-like names without regex backtracking', async () => {
+    const src = tmp();
+    // Keep each path under the manifest's 1,024-character limit while still
+    // providing hundreds of ambiguous separator positions to a backtracking
+    // implementation.
+    const separators = '--'.repeat(450);
+    writeFileSync(
+      join(src, 'package.json'),
+      JSON.stringify({
+        name: 'separator-heavy-names',
+        version: '1.0.0',
+        files: [`privatekey-${separators}.not-a-key`, `clientsecret-${separators}.not-json`],
+      }),
+    );
+
+    const packed = await packDirectory(src);
+    expect(packed.files).toEqual(['package.json']);
+  });
+
   it('rejects a manifest files entry that names a parent path', async () => {
     const base = tmp();
     const src = join(base, 'pkg');

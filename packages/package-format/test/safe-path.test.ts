@@ -26,6 +26,15 @@ describe('isSafeEntryPath', () => {
     expect(isSafeEntryPath('C%3a%2ftemp%2fsecret')).toBe(false);
   });
 
+  it('rejects deeply nested percent encoding with bounded work', () => {
+    const deeplyEncodedDots = `%${'25'.repeat(20_000)}2e%${'25'.repeat(20_000)}2e`;
+    expect(isSafeEntryPath(`package/${deeplyEncodedDots}/secret`)).toBe(false);
+  });
+
+  it('catches encoded syntax even when another escape is malformed', () => {
+    expect(isSafeEntryPath('package/%zz/%252e%252e/secret')).toBe(false);
+  });
+
   it('rejects absolute, drive-relative, backslash, and NUL paths', () => {
     expect(isSafeEntryPath('/etc/passwd')).toBe(false);
     expect(isSafeEntryPath('C:secret')).toBe(false);

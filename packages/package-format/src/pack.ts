@@ -29,6 +29,71 @@ const SENSITIVE_FILE_NAMES = new Set([
   'secrets.json',
 ]);
 
+const PRIVATE_KEY_EXTENSIONS = new Set(['der', 'json', 'key', 'pem']);
+
+function isNameSeparator(char: string | undefined): boolean {
+  return char === '-' || char === '_' || char === '.';
+}
+
+function delimitedCompoundEnd(
+  value: string,
+  start: number,
+  first: string,
+  second: string,
+  allowDotBetweenWords: boolean,
+): number | undefined {
+  if (!value.startsWith(first, start)) return undefined;
+
+  let cursor = start + first.length;
+  if (
+    value[cursor] === '-' ||
+    value[cursor] === '_' ||
+    (allowDotBetweenWords && value[cursor] === '.')
+  ) {
+    cursor += 1;
+  }
+  if (!value.startsWith(second, cursor)) return undefined;
+
+  const end = cursor + second.length;
+  return end === value.length || isNameSeparator(value[end]) ? end : undefined;
+}
+
+function containsDelimitedCompound(value: string, first: string, second: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (index > 0 && !isNameSeparator(value[index - 1])) continue;
+    if (delimitedCompoundEnd(value, index, first, second, true) !== undefined) return true;
+  }
+  return false;
+}
+
+function endsWithDelimitedCompound(value: string, first: string, second: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (index > 0 && !isNameSeparator(value[index - 1])) continue;
+    if (delimitedCompoundEnd(value, index, first, second, true) === value.length) return true;
+  }
+  return false;
+}
+
+function hasPrivateKeyFileName(name: string): boolean {
+  const extensionSeparator = name.lastIndexOf('.');
+  if (extensionSeparator <= 0) return false;
+
+  const extension = name.slice(extensionSeparator + 1);
+  if (!PRIVATE_KEY_EXTENSIONS.has(extension)) return false;
+
+  return containsDelimitedCompound(name.slice(0, extensionSeparator), 'private', 'key');
+}
+
+function hasJsonCredentialFileName(name: string): boolean {
+  if (!name.endsWith('.json')) return false;
+  const stem = name.slice(0, -'.json'.length);
+
+  return (
+    delimitedCompoundEnd(stem, 0, 'client', 'secret', false) !== undefined ||
+    delimitedCompoundEnd(stem, 0, 'service', 'account', false) !== undefined
+  );
+}
+
 function isContained(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
@@ -58,13 +123,10 @@ function isSensitivePath(rel: string, abs?: string): boolean {
   if (SENSITIVE_FILE_NAMES.has(name)) return true;
   if (/^id_(?:rsa|dsa|ecdsa|ed25519)$/.test(name)) return true;
   if (/\.(?:key|p12|pfx|jks|keystore)$/.test(name)) return true;
-  if (
-    /(?:^|[-_.])private[-_.]?key$/.test(name) ||
-    /(?:^|[-_.])private[-_.]?key(?:[-_.][^.]+)*\.(?:der|json|key|pem)$/.test(name)
-  ) {
+  if (endsWithDelimitedCompound(name, 'private', 'key') || hasPrivateKeyFileName(name)) {
     return true;
   }
-  if (/^(?:client[-_]?secret|service[-_]?account)(?:[-_.][^.]+)*\.json$/.test(name)) return true;
+  if (hasJsonCredentialFileName(name)) return true;
   if (/^(?:.*[-_.])?credentials?(?:\.(?:ini|json|ya?ml))?$/.test(name)) return true;
   if (abs && name.endsWith('.pem') && hasPrivateKeyHeader(abs)) return true;
   return false;
