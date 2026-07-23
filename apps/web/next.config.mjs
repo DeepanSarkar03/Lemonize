@@ -2,6 +2,16 @@
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@lemonize/shared'],
+  async redirects() {
+    return [
+      {
+        source: '/:path*',
+        has: [{ type: 'host', value: 'www.lemonize.cyou' }],
+        destination: 'https://lemonize.cyou/:path*',
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

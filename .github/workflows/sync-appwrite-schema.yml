@@ -131,4 +131,8 @@ jobs:
             exit 1
           fi
           cd "infrastructure/appwrite/$DEPLOY_ENV"
-          HOME="$appwrite_home" appwrite --force push all --no-logs
+          # API keys cannot push console-only project settings. Keep this job
+          # limited to the declarative resources required by the registry; the
+          # scanner function is reconciled by the protected deploy workflow.
+          HOME="$appwrite_home" appwrite --force push buckets
+          HOME="$appwrite_home" appwrite --force push tables
