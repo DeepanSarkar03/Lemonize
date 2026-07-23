@@ -1,5 +1,5 @@
 # Lemonize Appwrite staging
 
-This directory is linked to the staging Appwrite project by the Appwrite CLI.
-It must never share databases, buckets, functions, or API keys with production.
-
+This checked-in definition is reconciled to staging through the protected,
+additive-only modern TablesDB and Storage API workflow. It must never share
+databases, buckets, functions, or API keys with production.

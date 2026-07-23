@@ -1,5 +1,5 @@
 # Lemonize Appwrite production
 
-This directory is linked to the production Appwrite project by the Appwrite CLI.
-Resource definitions are checked in; API keys remain in provider secret stores only.
-
+This checked-in definition is reconciled through the protected, additive-only
+modern TablesDB and Storage API workflow. API keys remain in provider secret
+stores only.
