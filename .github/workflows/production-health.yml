@@ -16,19 +16,51 @@ jobs:
   synthetic:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    environment: production-monitoring
     steps:
-      - name: Check public production paths
+      - name: Check production web
+        shell: bash
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          set -euo pipefail
+          headers=(--user-agent 'Lemonize-Production-Monitor/1.0')
+          if [[ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]]; then
+            headers+=(--header "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET")
+          fi
+          curl --fail --silent --show-error --retry 2 --retry-all-errors --max-time 15 \
+            "${headers[@]}" https://lemonize.cyou/ >/dev/null
+
+      - name: Check registry readiness
+        if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --max-time 15 https://lemonize.cyou/ >/dev/null
           ready=$(curl --fail --silent --show-error --max-time 15 https://registry.lemonize.cyou/ready)
           node -e 'const body=JSON.parse(process.argv[1]); if(body.status!=="ready") process.exit(1)' "$ready"
+
+      - name: Check registry policy
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
           limits=$(curl --fail --silent --show-error --max-time 15 https://registry.lemonize.cyou/v1/limits)
           node -e 'const body=JSON.parse(process.argv[1]); if(typeof body.allowPublicPublish!=="boolean") process.exit(1)' "$limits"
+
+      - name: Check npm CDN packument
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
           curl --fail --silent --show-error --max-time 15 \
             -H 'Accept: application/vnd.npm.install-v1+json' \
             https://npm.lemonize.cyou/is-number >/dev/null
+
+      - name: Check CLI installer
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
           installer=$(curl --fail --silent --show-error --max-time 15 \
             https://registry.lemonize.cyou/install.sh)
           grep -Fq 'npm install --global @lemonize/cli@latest' <<<"$installer"

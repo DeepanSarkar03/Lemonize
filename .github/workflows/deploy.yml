@@ -137,8 +137,10 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter @lemonize/shared build
-          npm install --global "appwrite-cli@$APPWRITE_CLI_VERSION"
-          npm install --global "vercel@$VERCEL_CLI_VERSION"
+          npm install --global --ignore-scripts --no-audit --no-fund \
+            "appwrite-cli@$APPWRITE_CLI_VERSION"
+          npm install --global --ignore-scripts --no-audit --no-fund \
+            "vercel@$VERCEL_CLI_VERSION"
 
       - name: Validate non-secret deployment configuration
         env:
@@ -204,7 +206,11 @@ jobs:
             --project-id "$APPWRITE_PROJECT_ID" \
             --key "$APPWRITE_DEPLOY_API_KEY" >/dev/null
           cd "infrastructure/appwrite/${{ inputs.environment }}"
-          HOME="$appwrite_home" appwrite --force push all --no-logs
+          # Project settings require a console session and are intentionally
+          # excluded from API-key deployments. Scanner deployment is handled
+          # by the following, separately scoped reconciliation step.
+          HOME="$appwrite_home" appwrite --force push buckets
+          HOME="$appwrite_home" appwrite --force push tables
 
       - name: Reconcile and deploy Appwrite artifact scanner
         env:

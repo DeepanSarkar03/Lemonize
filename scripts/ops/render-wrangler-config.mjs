@@ -154,7 +154,10 @@ const config = {
   workers_dev: false,
   compatibility_date: '2026-07-16',
   compatibility_flags: ['nodejs_compat'],
-  observability: { enabled: true },
+  observability: {
+    enabled: true,
+    logs: { enabled: true, invocation_logs: true, head_sampling_rate: 0.05 },
+  },
   triggers: { crons: ['*/15 * * * *'] },
   durable_objects: {
     bindings: [
