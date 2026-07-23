@@ -36,7 +36,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ready=$(curl --fail --silent --show-error --max-time 15 https://registry.lemonize.cyou/ready)
+          ready=$(curl --fail --silent --show-error --max-time 15 \
+            --user-agent 'Lemonize-Production-Monitor/1.0' \
+            https://registry.lemonize.cyou/ready)
           node -e 'const body=JSON.parse(process.argv[1]); if(body.status!=="ready") process.exit(1)' "$ready"
 
       - name: Check registry policy
@@ -44,7 +46,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          limits=$(curl --fail --silent --show-error --max-time 15 https://registry.lemonize.cyou/v1/limits)
+          limits=$(curl --fail --silent --show-error --max-time 15 \
+            --user-agent 'Lemonize-Production-Monitor/1.0' \
+            https://registry.lemonize.cyou/v1/limits)
           node -e 'const body=JSON.parse(process.argv[1]); if(typeof body.allowPublicPublish!=="boolean") process.exit(1)' "$limits"
 
       - name: Check npm CDN packument
@@ -53,6 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --max-time 15 \
+            --user-agent 'Lemonize-Production-Monitor/1.0' \
             -H 'Accept: application/vnd.npm.install-v1+json' \
             https://npm.lemonize.cyou/is-number >/dev/null
 
@@ -62,5 +67,6 @@ jobs:
         run: |
           set -euo pipefail
           installer=$(curl --fail --silent --show-error --max-time 15 \
+            --user-agent 'Lemonize-Production-Monitor/1.0' \
             https://registry.lemonize.cyou/install.sh)
           grep -Fq 'npm install --global @lemonize/cli@latest' <<<"$installer"
