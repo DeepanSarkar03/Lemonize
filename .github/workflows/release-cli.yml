@@ -79,6 +79,8 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
+      - name: Re-audit production dependencies at release time
+        run: pnpm audit --prod --audit-level high
       - name: Build and pack npm package without release authority
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -86,6 +88,37 @@ jobs:
           set -euo pipefail
           version=${RELEASE_TAG#cli-v}
           pnpm --filter '@lemonize/cli...' build
+          node <<'NODE'
+          const { readFileSync, readdirSync } = require('node:fs');
+          const { join } = require('node:path');
+
+          const minimum = [7, 5, 21];
+          const versions = new Set();
+          const visit = (directory) => {
+            for (const entry of readdirSync(directory, { withFileTypes: true })) {
+              const path = join(directory, entry.name);
+              if (entry.isDirectory()) visit(path);
+              else if (entry.isFile() && entry.name.endsWith('.js')) {
+                const source = readFileSync(path, 'utf8');
+                for (const match of source.matchAll(/node_modules\/\.pnpm\/tar@(\d+)\.(\d+)\.(\d+)\//g)) {
+                  versions.add(match.slice(1, 4).map(Number).join('.'));
+                }
+              }
+            }
+          };
+          visit('packages/cli/dist');
+          if (versions.size !== 1) {
+            throw new Error(`Expected exactly one bundled tar version, found: ${[...versions].join(', ') || 'none'}`);
+          }
+          const bundled = [...versions][0].split('.').map(Number);
+          const isPatched = bundled.some((part, index) =>
+            part > minimum[index] && bundled.slice(0, index).every((value, prior) => value === minimum[prior]),
+          ) || bundled.every((part, index) => part === minimum[index]);
+          if (!isPatched) {
+            throw new Error(`Refusing to release CLI with vulnerable bundled tar@${bundled.join('.')}`);
+          }
+          console.log(`Verified patched bundled tar@${bundled.join('.')}`);
+          NODE
           mkdir -p "$RUNNER_TEMP/cli-package"
           (
             cd packages/cli
