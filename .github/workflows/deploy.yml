@@ -189,28 +189,19 @@ jobs:
             --config "$RUNNER_TEMP/wrangler.json" --dry-run \
             --outdir "$RUNNER_TEMP/wrangler-dry-run"
 
-      - name: Push Appwrite resource definitions
+      - name: Reconcile Appwrite resource definitions
         env:
           APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
           APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
           APPWRITE_DEPLOY_API_KEY: ${{ secrets.APPWRITE_DEPLOY_API_KEY }}
+          DEPLOY_ENV: ${{ inputs.environment }}
         run: |
           bash scripts/ops/require-env.sh \
-            APPWRITE_ENDPOINT APPWRITE_PROJECT_ID APPWRITE_DEPLOY_API_KEY
-          appwrite_home="$RUNNER_TEMP/appwrite-home"
-          trap 'rm -rf -- "$appwrite_home"' EXIT
-          umask 077
-          mkdir -p "$appwrite_home"
-          HOME="$appwrite_home" appwrite client \
-            --endpoint "$APPWRITE_ENDPOINT" \
-            --project-id "$APPWRITE_PROJECT_ID" \
-            --key "$APPWRITE_DEPLOY_API_KEY" >/dev/null
-          cd "infrastructure/appwrite/${{ inputs.environment }}"
-          # Project settings require a console session and are intentionally
-          # excluded from API-key deployments. Scanner deployment is handled
-          # by the following, separately scoped reconciliation step.
-          HOME="$appwrite_home" appwrite --force --all push buckets
-          HOME="$appwrite_home" appwrite --force --all push tables
+            APPWRITE_ENDPOINT APPWRITE_PROJECT_ID APPWRITE_DEPLOY_API_KEY DEPLOY_ENV
+          # The schema reconciler uses modern TablesDB/Storage endpoints. It
+          # creates absent resources and fails on drift; it never updates or
+          # deletes existing production data. Scanner deployment follows.
+          node scripts/ops/reconcile-appwrite-schema.mjs "$DEPLOY_ENV"
 
       - name: Reconcile and deploy Appwrite artifact scanner
         env:

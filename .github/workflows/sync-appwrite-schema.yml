@@ -25,7 +25,6 @@ concurrency:
 
 env:
   NODE_VERSION: 24
-  APPWRITE_CLI_VERSION: 22.6.1
 
 jobs:
   preflight:
@@ -95,10 +94,6 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install pinned Appwrite CLI
-        run: >-
-          npm install --global --ignore-scripts --no-audit --no-fund
-          "appwrite-cli@$APPWRITE_CLI_VERSION"
       - name: Validate protected Appwrite target
         env:
           APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
@@ -108,7 +103,7 @@ jobs:
           bash scripts/ops/require-env.sh \
             APPWRITE_ENDPOINT APPWRITE_PROJECT_ID DEPLOY_ENV
           node scripts/ops/verify-appwrite-config.mjs "$DEPLOY_ENV"
-      - name: Push checked-in Appwrite resource definitions
+      - name: Reconcile checked-in Appwrite resource definitions
         env:
           APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
           APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
@@ -117,22 +112,6 @@ jobs:
         run: |
           bash scripts/ops/require-env.sh \
             APPWRITE_ENDPOINT APPWRITE_PROJECT_ID APPWRITE_DEPLOY_API_KEY DEPLOY_ENV
-          appwrite_home="$RUNNER_TEMP/appwrite-home"
-          client_log="$RUNNER_TEMP/appwrite-client.log"
-          trap 'rm -rf -- "$appwrite_home" "$client_log"' EXIT
-          umask 077
-          mkdir -p "$appwrite_home"
-          export APPWRITE_CLI_HOME="$appwrite_home"
-          if ! HOME="$appwrite_home" appwrite client \
-            --endpoint "$APPWRITE_ENDPOINT" \
-            --project-id "$APPWRITE_PROJECT_ID" \
-            --key "$APPWRITE_DEPLOY_API_KEY" >"$client_log" 2>&1; then
-            echo "Failed to configure the protected Appwrite target" >&2
-            exit 1
-          fi
-          cd "infrastructure/appwrite/$DEPLOY_ENV"
-          # API keys cannot push console-only project settings. Keep this job
-          # limited to the declarative resources required by the registry; the
-          # scanner function is reconciled by the protected deploy workflow.
-          HOME="$appwrite_home" appwrite --force --all push buckets
-          HOME="$appwrite_home" appwrite --force --all push tables
+          # Additive-only: creates absent TablesDB/Storage resources and fails
+          # on drift. It never updates or deletes existing production data.
+          node scripts/ops/reconcile-appwrite-schema.mjs "$DEPLOY_ENV"

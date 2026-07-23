@@ -46,7 +46,7 @@ Keep publishing read-only when rolling the registry back to a revision that pred
 
 ## Appwrite TablesDB, scanner, and data
 
-For a definition-only regression, dispatch the last known-good commit through the normal protected deployment. Review destructive Appwrite CLI prompts before approving; reverting configuration is not a TablesDB data restore. Do not point the Worker at the legacy D1 database or another environment as a rollback mechanism.
+The protected Appwrite schema reconciler is additive-only: it never removes or rewrites an existing database, table, column, index, or bucket. Reverting a checked-in definition therefore does not revert the deployed TablesDB schema. Roll application code only to a revision compatible with the forward schema, and use a separately reviewed migration or backup restore when data repair is required. Do not point the Worker at the legacy D1 database or another environment as a rollback mechanism.
 
 If only the artifact scanner regressed, list its ready deployments and reactivate the last known-good ID before rolling back unrelated schemas:
 
