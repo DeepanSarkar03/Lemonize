@@ -87,26 +87,29 @@ describe('recursive lockfile-v2 installer', () => {
     const rootAuthority = `${REGISTRY}/v1/packages/${encodeURIComponent('@demo/root')}/versions/2.0.0/tarball`;
     const childAuthority = `${REGISTRY}/v1/packages/${encodeURIComponent('@demo/child')}/versions/1.0.0/tarball`;
     const npmTarball = `${NPM}/left-pad/-/left-pad-1.3.0.tgz`;
+    const rootMetadataUrl = new URL(`/v1/packages/${encodeURIComponent('@demo/root')}`, REGISTRY);
+    const childMetadataUrl = new URL(`/v1/packages/${encodeURIComponent('@demo/child')}`, REGISTRY);
+    const npmMetadataUrl = new URL('/left-pad', NPM);
     const rootMetadata = metadata('@demo/root', root, rootTarball);
     const childMetadata = metadata('@demo/child', child, childTarball);
     let metadataRequests = 0;
     let rootBlocked = false;
 
     globalThis.fetch = vi.fn(async (input: Request | string | URL) => {
-      const url = input.toString();
-      if (url === rootAuthority) {
+      const url = new URL(input.toString());
+      if (url.href === rootAuthority) {
         return rootBlocked ? new Response(null, { status: 404 }) : new Response(null);
       }
-      if (url === childAuthority) return new Response(null);
-      if (url === rootTarball) {
+      if (url.href === childAuthority) return new Response(null);
+      if (url.href === rootTarball) {
         return rootBlocked
           ? new Response('not found', { status: 404 })
           : new Response(root.tarball);
       }
-      if (url === childTarball) return new Response(child.tarball);
-      if (url === npmTarball) return new Response(npmChild.tarball);
+      if (url.href === childTarball) return new Response(child.tarball);
+      if (url.href === npmTarball) return new Response(npmChild.tarball);
       metadataRequests += 1;
-      if (url.startsWith(NPM)) {
+      if (url.href === npmMetadataUrl.href) {
         return new Response(
           JSON.stringify({
             name: 'left-pad',
@@ -121,10 +124,10 @@ describe('recursive lockfile-v2 installer', () => {
           }),
         );
       }
-      if (url.includes(encodeURIComponent('@demo/root'))) {
+      if (url.href === rootMetadataUrl.href) {
         return new Response(JSON.stringify(rootMetadata));
       }
-      if (url.includes(encodeURIComponent('@demo/child'))) {
+      if (url.href === childMetadataUrl.href) {
         return new Response(JSON.stringify(childMetadata));
       }
       return new Response('not found', { status: 404 });
