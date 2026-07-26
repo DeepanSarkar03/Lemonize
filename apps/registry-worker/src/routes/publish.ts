@@ -41,6 +41,7 @@ import {
 import {
   assertPublishingIdentity,
   assertGlobalArtifactQuota,
+  assertPackageScopeExclusive,
   assertPublishQuota,
   artifactPromotionEnabled,
   immutableStagingKey,
@@ -139,6 +140,41 @@ function requireOwnedPackage(c: Context<AppBindings>, pkg: AppwriteRow<PackageDa
   if (!userId || (pkg.ownerId !== userId && c.get('role') !== 'admin')) {
     throw forbidden('You are not the owner of this package.');
   }
+}
+
+async function requireExclusivePackageScope(
+  c: Context<AppBindings>,
+  repo: RegistryAppwriteRepository,
+  scope: string,
+): Promise<void> {
+  const { userId } = actor(c);
+  const foreignPackageOwnerIds = async (): Promise<string[]> => {
+    let cursor: string | null = null;
+    for (let page = 0; page < 100; page += 1) {
+      const rows = await repo.listPackagesByScope(scope, {
+        queries: [
+          AppwriteQuery.limit(100),
+          ...(cursor ? [AppwriteQuery.cursorAfter(cursor)] : []),
+        ],
+        total: false,
+      });
+      const foreign = rows.rows.find((pkg) => pkg.ownerId !== userId);
+      if (foreign) return [foreign.ownerId];
+      if (rows.rows.length < 100) return [];
+      cursor = rows.rows.at(-1)?.$id ?? null;
+      if (!cursor) break;
+    }
+    throw forbidden('Package namespace ownership could not be verified.');
+  };
+  const [primaryOwner, foreignOwnerIds] = await Promise.all([
+    repo.getUserByNamespace(scope),
+    foreignPackageOwnerIds(),
+  ]);
+  assertPackageScopeExclusive({
+    userId,
+    primaryNamespaceOwnerId: primaryOwner?.$id,
+    packageOwnerIds: foreignOwnerIds,
+  });
 }
 
 function validSha512Integrity(value: string): boolean {
@@ -732,7 +768,7 @@ publish.post('/packages', requireAuth, requirePublisher, async (c) => {
   const check = validatePackageName(body.name);
   if (!check.ok || !check.parsed) throw badRequest('Invalid package name', check.errors);
   assertPublishingIdentity({
-    namespace: c.get('namespace'),
+    authorizedPackageScopes: c.get('authorizedPackageScopes'),
     packageScope: check.parsed.scope,
     tokenScopes: c.get('tokenScopes'),
   });
@@ -745,6 +781,7 @@ publish.post('/packages', requireAuth, requirePublisher, async (c) => {
   }
   const { userId } = actor(c);
   const repo = registryRepository(c.env);
+  await requireExclusivePackageScope(c, repo, check.parsed.scope!);
   const normalizedName = normalizePackageName(body.name);
   const quotaLock = await acquirePublisherQuotaLock(c.env, userId);
   try {
@@ -782,7 +819,7 @@ publish.post('/packages/:name/versions', requireAuth, requirePublisher, async (c
   const check = validatePackageName(name);
   if (!check.ok || !check.parsed) throw badRequest('Invalid package name', check.errors);
   assertPublishingIdentity({
-    namespace: c.get('namespace'),
+    authorizedPackageScopes: c.get('authorizedPackageScopes'),
     packageScope: check.parsed.scope,
     tokenScopes: c.get('tokenScopes'),
   });
@@ -819,6 +856,7 @@ publish.post('/packages/:name/versions', requireAuth, requirePublisher, async (c
 
   const { userId } = actor(c);
   const repo = registryRepository(c.env);
+  await requireExclusivePackageScope(c, repo, check.parsed.scope!);
   const normalizedName = normalizePackageName(name);
   const globalQuotaLock = await acquireGlobalArtifactQuotaLock(c.env);
   let quotaLock: string | null = null;
@@ -1081,6 +1119,12 @@ publish.post(
       throw badRequest('Package mismatch.');
     }
     requireOwnedPackage(c, pkg);
+    assertPublishingIdentity({
+      authorizedPackageScopes: c.get('authorizedPackageScopes'),
+      packageScope: pkg.scope,
+      tokenScopes: c.get('tokenScopes'),
+    });
+    await requireExclusivePackageScope(c, repo, pkg.scope);
     const version = await repo.getVersion(pkg.$id, reservation.version);
     if (!version || version.stagingKey !== reservation.stagingKey) {
       throw notFound(ErrorCodes.VERSION_NOT_FOUND, 'Reserved version was not found.');

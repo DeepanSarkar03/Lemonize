@@ -70,6 +70,8 @@ Supported API-token scopes are `read`, `publish`, `manage:packages`, and `manage
 
 In public mode, publisher eligibility comes from a stable GitHub external ID returned by Clerk, not an email, username supplied by a client, or mutable GitHub username. `ADMIN_CLERK_IDS` grants administrator role by immutable Clerk subject. New accounts enter the current Clerk legal-consent flow; existing accounts must accept the exact current terms version through a Clerk browser session before publishing.
 
+An environment may additionally map one canonical package scope to one stable GitHub external ID with the required `PACKAGE_SCOPE_GRANTS_JSON` array (`[]` means none). This server-side package authorization is distinct from API-token capability scopes and does not rename the account namespace or bypass package ownership. API-token identities matching a grant reconcile their Clerk GitHub link at least every 60 seconds through a separate cache, and publish finalization rechecks current grant authorization.
+
 ## Account and dashboard
 
 All responses below are authenticated and `private, no-store`:
@@ -94,7 +96,7 @@ All responses below are authenticated and `private, no-store`:
 | `PUT`  | `/v1/uploads/:reservationId`                    | Upload capability                         | Streams the exact declared byte count into a random private R2 staging key                       |
 | `POST` | `/v1/packages/:name/versions/:version/finalize` | Publisher + `publish` + upload capability | Verifies the staged object and queues scanning; normally returns `202` with `status: "scanning"` |
 
-Publishing also requires `REGISTRY_MODE=public`, `ALLOW_PUBLIC_PUBLISH=true`, current terms, an active publisher/admin role, ownership, and an `@namespace/name` matching the caller's immutable Lemonize namespace. Public publishers must have a linked GitHub identity. Private package publication is disabled.
+Publishing also requires `REGISTRY_MODE=public`, `ALLOW_PUBLIC_PUBLISH=true`, current terms, an active publisher/admin role, ownership, and an `@namespace/name` matching the caller's immutable Lemonize namespace or exact server-side package-scope grant. Public publishers must have a linked GitHub identity. Private package publication is disabled.
 
 The public-beta account limits are five packages, twenty versions per package, two concurrent reservations, 10 MiB per artifact, and 100 MiB published plus reserved bytes. A serialized global gate also rejects a reservation that would exceed `MAX_GLOBAL_ARTIFACT_BYTES`; its checked-in value is 1 GiB until verified storage entitlements justify a value no greater than 70% of the lower R2/Appwrite allowance and never above 7 GiB.
 

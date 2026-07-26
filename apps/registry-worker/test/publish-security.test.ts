@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { LemonizeError } from '@lemonize/shared';
+import { authorizedPackageScopes } from '../src/lib/package-scope-grants.js';
 import {
   assertPublishingIdentity,
+  assertPackageScopeExclusive,
   assertGlobalArtifactQuota,
   assertPublishQuota,
   artifactPromotionEnabled,
@@ -93,18 +95,101 @@ describe('publish capability boundaries', () => {
   it('requires the authenticated namespace and a publish-capable token', () => {
     expect(() =>
       assertPublishingIdentity({
-        namespace: 'alice',
+        authorizedPackageScopes: ['alice', 'staging-team'],
         packageScope: 'alice',
         tokenScopes: ['publish'],
       }),
     ).not.toThrow();
+    expect(() =>
+      assertPublishingIdentity({
+        authorizedPackageScopes: ['alice', 'staging-team'],
+        packageScope: 'staging-team',
+        tokenScopes: ['publish'],
+      }),
+    ).not.toThrow();
     for (const input of [
-      { namespace: 'alice', packageScope: null, tokenScopes: ['publish'] },
-      { namespace: 'alice', packageScope: 'bob', tokenScopes: ['publish'] },
-      { namespace: 'alice', packageScope: 'alice', tokenScopes: ['read'] },
+      { authorizedPackageScopes: ['alice'], packageScope: null, tokenScopes: ['publish'] },
+      { authorizedPackageScopes: ['alice'], packageScope: 'bob', tokenScopes: ['publish'] },
+      { authorizedPackageScopes: ['alice'], packageScope: 'alice', tokenScopes: ['read'] },
     ]) {
       expect(() => assertPublishingIdentity(input)).toThrow(LemonizeError);
     }
+  });
+
+  it('rejects a scope claimed by another primary identity or package owner', () => {
+    expect(() =>
+      assertPackageScopeExclusive({
+        userId: 'user-1',
+        primaryNamespaceOwnerId: 'user-1',
+        packageOwnerIds: [],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPackageScopeExclusive({
+        userId: 'user-1',
+        primaryNamespaceOwnerId: 'user-2',
+        packageOwnerIds: [],
+      }),
+    ).toThrow(LemonizeError);
+    expect(() =>
+      assertPackageScopeExclusive({
+        userId: 'user-1',
+        primaryNamespaceOwnerId: null,
+        packageOwnerIds: ['user-2'],
+      }),
+    ).toThrow(LemonizeError);
+  });
+
+  it('blocks both sides of a grant that collides with a pre-existing primary namespace', () => {
+    const grants = [{ scope: 'staging-team', githubId: 'github-grantee' }];
+    const claimantScopes = authorizedPackageScopes({
+      namespace: 'staging-team',
+      githubId: 'github-claimant',
+      grants,
+    });
+    expect(() =>
+      assertPublishingIdentity({
+        authorizedPackageScopes: claimantScopes,
+        packageScope: 'staging-team',
+        tokenScopes: ['publish'],
+      }),
+    ).toThrow(LemonizeError);
+
+    const granteeScopes = authorizedPackageScopes({
+      namespace: 'grantee-home',
+      githubId: 'github-grantee',
+      grants,
+    });
+    expect(() =>
+      assertPackageScopeExclusive({
+        userId: 'grantee-user',
+        primaryNamespaceOwnerId: 'claimant-user',
+        packageOwnerIds: [],
+      }),
+    ).toThrow(LemonizeError);
+    expect(granteeScopes).toContain('staging-team');
+  });
+
+  it('rechecks authorization when a grant is removed between reserve and finalize', () => {
+    const grant = { scope: 'staging-team', githubId: 'github-42' };
+    const identity = { namespace: 'alice', githubId: 'github-42' };
+    const reservedWith = authorizedPackageScopes({ ...identity, grants: [grant] });
+    expect(() =>
+      assertPublishingIdentity({
+        authorizedPackageScopes: reservedWith,
+        packageScope: 'staging-team',
+        tokenScopes: ['publish'],
+      }),
+    ).not.toThrow();
+
+    const finalizedWith = authorizedPackageScopes({ ...identity, grants: [] });
+    expect(() =>
+      assertPublishingIdentity({
+        authorizedPackageScopes: finalizedWith,
+        packageScope: 'staging-team',
+        tokenScopes: ['publish'],
+      }),
+    ).toThrow(LemonizeError);
   });
 
   it('generates non-reusable staging object keys beneath one reservation', () => {

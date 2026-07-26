@@ -34,13 +34,17 @@ In `public` mode, an active Clerk account with a linked GitHub external ID is pr
 
 The preferred namespace is normalized from the GitHub username. A collision receives a deterministic suffix derived from the stable GitHub external ID. An existing account may adopt that namespace only before it owns a package; after ownership begins, namespace and package coordinates remain frozen across profile changes.
 
+An operator may grant an additional exact package scope to one immutable GitHub external ID with `PACKAGE_SCOPE_GRANTS_JSON`. Grants do not rename the user's frozen namespace, change package ownership, confer administrator access, or become token scopes. The Worker derives effective package scopes from the current authoritative `users.githubId` on every authentication, withholds even a frozen primary namespace when that scope is granted to another GitHub identity, and rejects the grantee when another primary namespace or package owner collides. Missing, blank, malformed, ambiguous, or duplicate grant configuration prevents Worker configuration loading instead of silently changing authorization.
+
+API-token users whose stored GitHub ID matches a configured grant use a separate Clerk-profile reconciliation cache with a maximum 60-second TTL. The normal 15-minute cache written by a Clerk session cannot satisfy that lookup, so unlinking or changing the authoritative GitHub account can leave grant authority stale for at most 60 seconds. Removing a configured grant takes effect on the next request, and finalize rechecks the current server-derived package scopes rather than relying on reservation-time authority.
+
 Publishing additionally requires:
 
 - `REGISTRY_MODE=public` and `ALLOW_PUBLIC_PUBLISH=true`;
 - an active `publisher` or `admin` role;
 - a token with the `publish` scope;
 - acceptance of the exact current terms version through the Clerk web session;
-- an `@namespace/name` package whose scope matches the authenticated user's immutable Lemonize namespace;
+- an `@namespace/name` package whose scope matches the authenticated user's immutable Lemonize namespace or an exact operator grant;
 - package ownership for subsequent version or maintenance writes.
 
 Supported API-token scopes are:
@@ -54,7 +58,7 @@ Supported API-token scopes are:
 
 The automatic device token lasts 30 days. Consumers receive `read` and `manage:tokens`; publishers and admins receive all four scopes. These Clerk/device-issued credentials are independent roots. Token creation accepts an explicit scope set and a 1-90 day lifetime. Independent roots can exist without `manage:tokens`, but an API-token caller must be an active root with that scope to manage its lineage. Its child cannot receive `manage:tokens`, cannot receive another scope the root lacks, and cannot outlive the root. A child therefore cannot delegate again. The active-token limit is ten per account. The runtime validates that stored scopes are recognized, but only publish and management routes currently enforce a capability scope.
 
-Legacy unscoped packages are compatibility data only. They remain readable and downloadable, while the publish path rejects an unscoped name and non-admin maintenance requires a non-empty package scope matching the authenticated namespace. Administrators retain an explicit remediation override only when the registry is mutable; production `read_only` rejects every HTTP package-mutation route before that override.
+Legacy unscoped packages are compatibility data only. They remain readable and downloadable, while the publish path rejects an unscoped name and non-admin maintenance requires ownership plus a non-empty package scope in the caller's server-derived authorization set. Administrators retain an explicit remediation override only when the registry is mutable; production `read_only` rejects every HTTP package-mutation route before that override.
 
 ## API-token storage and revocation
 

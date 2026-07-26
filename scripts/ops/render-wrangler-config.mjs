@@ -2,6 +2,7 @@
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
+import { normalizePackageScopeGrantsJson } from './package-scope-grants.mjs';
 
 const output = resolve(process.argv[2] ?? 'wrangler.generated.json');
 const root = resolve(import.meta.dirname, '../..');
@@ -23,6 +24,7 @@ const required = [
   'REGISTRY_BASE_URL',
   'WEB_BASE_URL',
   'CORS_ALLOWED_ORIGINS',
+  'PACKAGE_SCOPE_GRANTS_JSON',
   'REGISTRY_MODE',
   'APPWRITE_ENDPOINT',
   'APPWRITE_PROJECT_ID',
@@ -139,6 +141,9 @@ for (const clerkId of (process.env.ADMIN_CLERK_IDS ?? '').split(',').filter(Bool
     throw new Error(`Invalid ADMIN_CLERK_IDS entry: ${clerkId}`);
   }
 }
+const packageScopeGrantsJson = normalizePackageScopeGrantsJson(
+  process.env.PACKAGE_SCOPE_GRANTS_JSON,
+);
 
 const workerMain = relative(
   dirname(output),
@@ -184,6 +189,7 @@ const config = {
     WEB_BASE_URL: process.env.WEB_BASE_URL,
     CORS_ALLOWED_ORIGINS: process.env.CORS_ALLOWED_ORIGINS,
     ADMIN_CLERK_IDS: process.env.ADMIN_CLERK_IDS ?? '',
+    PACKAGE_SCOPE_GRANTS_JSON: packageScopeGrantsJson,
     REGISTRY_MODE: process.env.REGISTRY_MODE,
     APPWRITE_ENDPOINT: process.env.APPWRITE_ENDPOINT,
     APPWRITE_PROJECT_ID: process.env.APPWRITE_PROJECT_ID,

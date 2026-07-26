@@ -4,6 +4,10 @@ import type {
   R2Bucket,
 } from '@cloudflare/workers-types';
 import { stripTrailingSlashes } from './url.js';
+import {
+  parsePackageScopeGrants,
+  type PackageScopeGrant,
+} from './package-scope-grants.js';
 
 export interface Env {
   KV: KVNamespace;
@@ -25,6 +29,7 @@ export interface Env {
 
   REGISTRY_MODE: string;
   ADMIN_CLERK_IDS: string;
+  PACKAGE_SCOPE_GRANTS_JSON: string;
 
   APPWRITE_ENDPOINT: string;
   APPWRITE_PROJECT_ID: string;
@@ -57,6 +62,7 @@ export interface Config {
   corsAllowedOrigins: string[];
   registryMode: RegistryMode;
   adminClerkIds: string[];
+  packageScopeGrants: PackageScopeGrant[];
   clerkIssuer: string;
   clerkAuthorizedParties: string[];
 }
@@ -98,6 +104,7 @@ export function loadConfig(env: Env): Config {
     // Administrator authority is bound to Clerk's immutable subject, never a
     // mutable email address or GitHub username.
     adminClerkIds: list(env.ADMIN_CLERK_IDS),
+    packageScopeGrants: parsePackageScopeGrants(env.PACKAGE_SCOPE_GRANTS_JSON),
     clerkIssuer: stripTrailingSlashes(env.CLERK_ISSUER || ''),
     clerkAuthorizedParties: list(env.CLERK_AUTHORIZED_PARTIES),
   };
@@ -110,6 +117,7 @@ export interface Vars {
   clerkId?: string;
   email?: string;
   namespace?: string;
+  authorizedPackageScopes?: string[];
   role?: RegistryRole;
   acceptedTermsVersion?: string | null;
   tokenId?: string;

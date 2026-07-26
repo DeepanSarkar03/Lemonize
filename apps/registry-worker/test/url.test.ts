@@ -16,6 +16,7 @@ describe('URL normalization', () => {
       REGISTRY_BASE_URL: `https://registry.example.test${ADVERSARIAL_SUFFIX}`,
       WEB_BASE_URL: `https://www.example.test${ADVERSARIAL_SUFFIX}`,
       CLERK_ISSUER: `https://clerk.example.test${ADVERSARIAL_SUFFIX}`,
+      PACKAGE_SCOPE_GRANTS_JSON: '[]',
     } as unknown as Env);
 
     expect(config.registryBaseUrl).toBe('https://registry.example.test');

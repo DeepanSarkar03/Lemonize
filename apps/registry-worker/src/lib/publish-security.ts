@@ -166,15 +166,20 @@ export async function verifyScannerSignature(input: {
 }
 
 export function assertPublishingIdentity(input: {
-  namespace?: string;
+  authorizedPackageScopes?: readonly string[];
   packageScope: string | null;
   tokenScopes?: readonly string[] | string;
 }): void {
   if (!input.packageScope) {
     throw forbidden('Packages must be scoped to your Lemonize namespace.');
   }
-  if (!input.namespace || input.packageScope.toLowerCase() !== input.namespace.toLowerCase()) {
-    throw forbidden('You may only publish packages in your own namespace.');
+  const packageScope = input.packageScope.toLowerCase();
+  if (
+    !input.authorizedPackageScopes?.some(
+      (authorizedScope) => authorizedScope.toLowerCase() === packageScope,
+    )
+  ) {
+    throw forbidden('You may only publish packages in an authorized namespace.');
   }
   const scopes = Array.isArray(input.tokenScopes)
     ? input.tokenScopes
@@ -183,6 +188,19 @@ export function assertPublishingIdentity(input: {
       : [];
   if (scopes.length > 0 && !scopes.some((scope) => ['*', 'publish', 'packages:write'].includes(scope))) {
     throw forbidden('This token does not grant package publishing access.');
+  }
+}
+
+export function assertPackageScopeExclusive(input: {
+  userId: string;
+  primaryNamespaceOwnerId?: string | null;
+  packageOwnerIds: readonly string[];
+}): void {
+  if (
+    (input.primaryNamespaceOwnerId && input.primaryNamespaceOwnerId !== input.userId) ||
+    input.packageOwnerIds.some((ownerId) => ownerId !== input.userId)
+  ) {
+    throw forbidden('This package namespace belongs to another registry identity.');
   }
 }
 

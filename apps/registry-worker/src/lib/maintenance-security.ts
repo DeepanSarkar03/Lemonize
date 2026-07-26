@@ -10,7 +10,7 @@ export function assertRegistryMutable(mode: RegistryMode): void {
 export function assertMaintainerIdentity(input: {
   role?: RegistryRole;
   userId?: string;
-  namespace?: string;
+  authorizedPackageScopes?: readonly string[];
   packageOwnerId: string;
   packageScope: string;
 }): void {
@@ -21,8 +21,13 @@ export function assertMaintainerIdentity(input: {
   if (!input.userId || input.packageOwnerId !== input.userId) {
     throw forbidden('You are not the owner of this package.');
   }
-  const namespace = input.namespace?.toLowerCase();
-  if (!namespace || !input.packageScope || input.packageScope.toLowerCase() !== namespace) {
-    throw forbidden('You may only maintain packages in your own namespace.');
+  const packageScope = input.packageScope.toLowerCase();
+  if (
+    !packageScope ||
+    !input.authorizedPackageScopes?.some(
+      (authorizedScope) => authorizedScope.toLowerCase() === packageScope,
+    )
+  ) {
+    throw forbidden('You may only maintain packages in an authorized namespace.');
   }
 }
