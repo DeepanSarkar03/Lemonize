@@ -19,7 +19,7 @@ import {
   LemonizeError,
 } from '@lemonize/shared';
 import { loadConfig, type AppBindings, type Env } from '../lib/env.js';
-import { requireAuth, requirePublisher } from '../lib/auth.js';
+import { refreshClerkUserForAuthorization, requireAuth, requirePublisher } from '../lib/auth.js';
 import { rateLimit } from '../lib/ratelimit.js';
 import { invalidatePackage, kvKeys } from '../lib/kv-cache.js';
 import { registryRepository } from '../lib/registry.js';
@@ -39,8 +39,10 @@ import {
   type InvalidManifestRejectionResult,
 } from '../lib/staging-lifecycle.js';
 import {
+  assertArtifactPromotionIdentity,
   assertPublishingIdentity,
   assertGlobalArtifactQuota,
+  assertPackageScopeExclusive,
   assertPublishQuota,
   artifactPromotionEnabled,
   immutableStagingKey,
@@ -50,6 +52,7 @@ import {
   verifyScannerSignature,
 } from '../lib/publish-security.js';
 import { appwriteApiBaseUrl } from '../lib/url.js';
+import { authorizedPackageScopes } from '../lib/package-scope-grants.js';
 
 export const publish = new Hono<AppBindings>();
 /** Mounted at `/`, not `/v1`, so the Appwrite scanner has a stable private protocol path. */
@@ -139,6 +142,22 @@ function requireOwnedPackage(c: Context<AppBindings>, pkg: AppwriteRow<PackageDa
   if (!userId || (pkg.ownerId !== userId && c.get('role') !== 'admin')) {
     throw forbidden('You are not the owner of this package.');
   }
+}
+
+async function requireExclusivePackageScope(
+  repo: RegistryAppwriteRepository,
+  scope: string,
+  userId: string,
+): Promise<void> {
+  const [primaryOwner, foreignPackageOwner] = await Promise.all([
+    repo.getUserByNamespace(scope),
+    repo.getForeignPackageOwner(scope, userId),
+  ]);
+  assertPackageScopeExclusive({
+    userId,
+    primaryNamespaceOwnerId: primaryOwner?.$id,
+    packageOwnerIds: foreignPackageOwner ? [foreignPackageOwner.ownerId] : [],
+  });
 }
 
 function validSha512Integrity(value: string): boolean {
@@ -361,8 +380,7 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
       version?.status === 'rejected' && version.scanError === 'invalid_manifest';
     if (
       !version ||
-      (!['scanning', 'published'].includes(version.status) &&
-        !incompleteInvalidManifestRejection)
+      (!['scanning', 'published'].includes(version.status) && !incompleteInvalidManifestRejection)
     ) {
       continue;
     }
@@ -402,12 +420,7 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
         version,
         reservation,
       });
-      reportIncompleteManifestRejection(
-        'scheduled_retry',
-        rejection,
-        job.$id,
-        version.$id,
-      );
+      reportIncompleteManifestRejection('scheduled_retry', rejection, job.$id, version.$id);
       continue;
     }
     if (job.attempts >= 3) {
@@ -433,12 +446,7 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
         version,
         reservation,
       });
-      reportIncompleteManifestRejection(
-        'scheduled_retry',
-        rejection,
-        job.$id,
-        version.$id,
-      );
+      reportIncompleteManifestRejection('scheduled_retry', rejection, job.$id, version.$id);
       continue;
     }
     let accepted = false;
@@ -732,7 +740,7 @@ publish.post('/packages', requireAuth, requirePublisher, async (c) => {
   const check = validatePackageName(body.name);
   if (!check.ok || !check.parsed) throw badRequest('Invalid package name', check.errors);
   assertPublishingIdentity({
-    namespace: c.get('namespace'),
+    authorizedPackageScopes: c.get('authorizedPackageScopes'),
     packageScope: check.parsed.scope,
     tokenScopes: c.get('tokenScopes'),
   });
@@ -745,6 +753,7 @@ publish.post('/packages', requireAuth, requirePublisher, async (c) => {
   }
   const { userId } = actor(c);
   const repo = registryRepository(c.env);
+  await requireExclusivePackageScope(repo, check.parsed.scope!, userId);
   const normalizedName = normalizePackageName(body.name);
   const quotaLock = await acquirePublisherQuotaLock(c.env, userId);
   try {
@@ -782,7 +791,7 @@ publish.post('/packages/:name/versions', requireAuth, requirePublisher, async (c
   const check = validatePackageName(name);
   if (!check.ok || !check.parsed) throw badRequest('Invalid package name', check.errors);
   assertPublishingIdentity({
-    namespace: c.get('namespace'),
+    authorizedPackageScopes: c.get('authorizedPackageScopes'),
     packageScope: check.parsed.scope,
     tokenScopes: c.get('tokenScopes'),
   });
@@ -796,9 +805,7 @@ publish.post('/packages/:name/versions', requireAuth, requirePublisher, async (c
     PUBLISH_QUOTAS.maxTarballSizeBytes,
   );
   if (intent.tarballSize > maxTarballSizeBytes) {
-    throw tooLarge(
-      `Tarball ${intent.tarballSize} bytes exceeds limit ${maxTarballSizeBytes}.`,
-    );
+    throw tooLarge(`Tarball ${intent.tarballSize} bytes exceeds limit ${maxTarballSizeBytes}.`);
   }
   if (intent.unpackedSize > config.maxUnpackedSizeBytes) {
     throw tooLarge(`Unpacked package exceeds limit ${config.maxUnpackedSizeBytes}.`);
@@ -819,6 +826,7 @@ publish.post('/packages/:name/versions', requireAuth, requirePublisher, async (c
 
   const { userId } = actor(c);
   const repo = registryRepository(c.env);
+  await requireExclusivePackageScope(repo, check.parsed.scope!, userId);
   const normalizedName = normalizePackageName(name);
   const globalQuotaLock = await acquireGlobalArtifactQuotaLock(c.env);
   let quotaLock: string | null = null;
@@ -1081,6 +1089,12 @@ publish.post(
       throw badRequest('Package mismatch.');
     }
     requireOwnedPackage(c, pkg);
+    assertPublishingIdentity({
+      authorizedPackageScopes: c.get('authorizedPackageScopes'),
+      packageScope: pkg.scope,
+      tokenScopes: c.get('tokenScopes'),
+    });
+    await requireExclusivePackageScope(repo, pkg.scope, userId);
     const version = await repo.getVersion(pkg.$id, reservation.version);
     if (!version || version.stagingKey !== reservation.stagingKey) {
       throw notFound(ErrorCodes.VERSION_NOT_FOUND, 'Reserved version was not found.');
@@ -1179,12 +1193,7 @@ publish.post(
         version,
         reservation,
       });
-      reportIncompleteManifestRejection(
-        'publish_finalize',
-        rejection,
-        job.$id,
-        version.$id,
-      );
+      reportIncompleteManifestRejection('publish_finalize', rejection, job.$id, version.$id);
       throw new LemonizeError(
         422,
         ErrorCodes.VALIDATION_FAILED,
@@ -1403,22 +1412,14 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
       version,
       reservation,
     });
-    reportIncompleteManifestRejection(
-      'scanner_result',
-      rejection,
-      job.$id,
-      version.$id,
-    );
+    reportIncompleteManifestRejection('scanner_result', rejection, job.$id, version.$id);
     return c.json({ ok: true, status: 'rejected' });
   }
 
   if (
     !timingSafeEqual(result.shasum!.toLowerCase(), version.shasum.toLowerCase()) ||
     !timingSafeEqual(result.integrity!, version.integrity) ||
-    !timingSafeEqual(
-      result.manifestSha256!.toLowerCase(),
-      declaredManifestHash,
-    ) ||
+    !timingSafeEqual(result.manifestSha256!.toLowerCase(), declaredManifestHash) ||
     result.fileCount !== version.fileCount ||
     result.unpackedSize !== version.unpackedSize
   ) {
@@ -1439,6 +1440,29 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
   if (!artifactPromotionEnabled(c.get('config'))) {
     c.header('retry-after', '600');
     return c.json({ ok: false, status: 'deferred' }, 503);
+  }
+
+  if (version.status !== 'published') {
+    const storedPublisher = await repo.users.getOrNull(version.publishedBy);
+    if (!storedPublisher) throw forbidden('The package publisher account was not found.');
+    const publisher = await refreshClerkUserForAuthorization(c, storedPublisher.clerkId);
+    const config = c.get('config');
+    assertArtifactPromotionIdentity({
+      publisherId: publisher.$id,
+      packageOwnerId: pkg.ownerId,
+      versionPublisherId: version.publishedBy,
+      userStatus: publisher.status,
+      role: publisher.role,
+      acceptedTermsVersion: publisher.acceptedTermsVersion,
+      authorizedPackageScopes: authorizedPackageScopes({
+        namespace: publisher.namespace,
+        githubId: publisher.githubId,
+        grants: config.packageScopeGrants,
+      }),
+      packageScope: pkg.scope,
+      packageStatus: pkg.status,
+    });
+    await requireExclusivePackageScope(repo, pkg.scope, publisher.$id);
   }
 
   const artifactKey = `artifacts/${pkg.$id}/${version.$id}/${version.shasum}.tgz`;
@@ -1499,11 +1523,9 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
   }
   await refreshPackageMetadata(repo, pkg, version);
   c.executionCtx.waitUntil(
-    c.env.KV
-      .put(kvKeys.publicVersion(pkg.normalizedName, version.version), '1', {
-        expirationTtl: 60,
-      })
-      .catch(() => undefined),
+    c.env.KV.put(kvKeys.publicVersion(pkg.normalizedName, version.version), '1', {
+      expirationTtl: 60,
+    }).catch(() => undefined),
   );
   if (reservation) await repo.reservations.update(reservation.$id, { status: 'completed' });
   await repo.completeScanJob(job.$id, result);

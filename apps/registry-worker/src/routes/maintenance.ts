@@ -36,7 +36,7 @@ async function requireMaintainer(
   assertMaintainerIdentity({
     role: c.get('role'),
     userId: c.get('userId'),
-    namespace: c.get('namespace'),
+    authorizedPackageScopes: c.get('authorizedPackageScopes'),
     packageOwnerId: pkg.ownerId,
     packageScope: pkg.scope,
   });

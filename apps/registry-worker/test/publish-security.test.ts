@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { LemonizeError } from '@lemonize/shared';
+import { authorizedPackageScopes } from '../src/lib/package-scope-grants.js';
+import { CURRENT_TERMS_VERSION } from '../src/lib/account-policy.js';
 import {
+  assertArtifactPromotionIdentity,
   assertPublishingIdentity,
+  assertPackageScopeExclusive,
   assertGlobalArtifactQuota,
   assertPublishQuota,
   artifactPromotionEnabled,
@@ -84,27 +88,168 @@ describe('scanner request authentication', () => {
 
 describe('publish capability boundaries', () => {
   it('stops scan promotion whenever the registry circuit breaker is active', () => {
-    expect(artifactPromotionEnabled({ registryMode: 'read_only', allowPublicPublish: true })).toBe(false);
-    expect(artifactPromotionEnabled({ registryMode: 'invite_only', allowPublicPublish: false })).toBe(false);
-    expect(artifactPromotionEnabled({ registryMode: 'invite_only', allowPublicPublish: true })).toBe(true);
-    expect(artifactPromotionEnabled({ registryMode: 'public', allowPublicPublish: true })).toBe(true);
+    expect(artifactPromotionEnabled({ registryMode: 'read_only', allowPublicPublish: true })).toBe(
+      false,
+    );
+    expect(
+      artifactPromotionEnabled({ registryMode: 'invite_only', allowPublicPublish: false }),
+    ).toBe(false);
+    expect(
+      artifactPromotionEnabled({ registryMode: 'invite_only', allowPublicPublish: true }),
+    ).toBe(true);
+    expect(artifactPromotionEnabled({ registryMode: 'public', allowPublicPublish: true })).toBe(
+      true,
+    );
   });
 
   it('requires the authenticated namespace and a publish-capable token', () => {
     expect(() =>
       assertPublishingIdentity({
-        namespace: 'alice',
+        authorizedPackageScopes: ['alice', 'staging-team'],
         packageScope: 'alice',
         tokenScopes: ['publish'],
       }),
     ).not.toThrow();
+    expect(() =>
+      assertPublishingIdentity({
+        authorizedPackageScopes: ['alice', 'staging-team'],
+        packageScope: 'staging-team',
+        tokenScopes: ['publish'],
+      }),
+    ).not.toThrow();
     for (const input of [
-      { namespace: 'alice', packageScope: null, tokenScopes: ['publish'] },
-      { namespace: 'alice', packageScope: 'bob', tokenScopes: ['publish'] },
-      { namespace: 'alice', packageScope: 'alice', tokenScopes: ['read'] },
+      { authorizedPackageScopes: ['alice'], packageScope: null, tokenScopes: ['publish'] },
+      { authorizedPackageScopes: ['alice'], packageScope: 'bob', tokenScopes: ['publish'] },
+      { authorizedPackageScopes: ['alice'], packageScope: 'alice', tokenScopes: ['read'] },
     ]) {
       expect(() => assertPublishingIdentity(input)).toThrow(LemonizeError);
     }
+  });
+
+  it('rejects a scope claimed by another primary identity or package owner', () => {
+    expect(() =>
+      assertPackageScopeExclusive({
+        userId: 'user-1',
+        primaryNamespaceOwnerId: 'user-1',
+        packageOwnerIds: [],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPackageScopeExclusive({
+        userId: 'user-1',
+        primaryNamespaceOwnerId: 'user-2',
+        packageOwnerIds: [],
+      }),
+    ).toThrow(LemonizeError);
+    expect(() =>
+      assertPackageScopeExclusive({
+        userId: 'user-1',
+        primaryNamespaceOwnerId: null,
+        packageOwnerIds: ['user-2'],
+      }),
+    ).toThrow(LemonizeError);
+  });
+
+  it('blocks both sides of a grant that collides with a pre-existing primary namespace', () => {
+    const grants = [{ scope: 'staging-team', githubId: 'github-grantee' }];
+    const claimantScopes = authorizedPackageScopes({
+      namespace: 'staging-team',
+      githubId: 'github-claimant',
+      grants,
+    });
+    expect(() =>
+      assertPublishingIdentity({
+        authorizedPackageScopes: claimantScopes,
+        packageScope: 'staging-team',
+        tokenScopes: ['publish'],
+      }),
+    ).toThrow(LemonizeError);
+
+    const granteeScopes = authorizedPackageScopes({
+      namespace: 'grantee-home',
+      githubId: 'github-grantee',
+      grants,
+    });
+    expect(() =>
+      assertPackageScopeExclusive({
+        userId: 'grantee-user',
+        primaryNamespaceOwnerId: 'claimant-user',
+        packageOwnerIds: [],
+      }),
+    ).toThrow(LemonizeError);
+    expect(granteeScopes).toContain('staging-team');
+  });
+
+  it('rechecks authorization when a grant is removed between reserve and finalize', () => {
+    const grant = { scope: 'staging-team', githubId: 'github-42' };
+    const identity = { namespace: 'alice', githubId: 'github-42' };
+    const reservedWith = authorizedPackageScopes({ ...identity, grants: [grant] });
+    expect(() =>
+      assertPublishingIdentity({
+        authorizedPackageScopes: reservedWith,
+        packageScope: 'staging-team',
+        tokenScopes: ['publish'],
+      }),
+    ).not.toThrow();
+
+    const finalizedWith = authorizedPackageScopes({ ...identity, grants: [] });
+    expect(() =>
+      assertPublishingIdentity({
+        authorizedPackageScopes: finalizedWith,
+        packageScope: 'staging-team',
+        tokenScopes: ['publish'],
+      }),
+    ).toThrow(LemonizeError);
+  });
+
+  it('rechecks the current grant immediately before scanner-approved promotion', () => {
+    const identity = { namespace: 'alice', githubId: 'github-42' };
+    const base = {
+      publisherId: 'user-1',
+      packageOwnerId: 'user-1',
+      versionPublisherId: 'user-1',
+      userStatus: 'active',
+      role: 'publisher',
+      acceptedTermsVersion: CURRENT_TERMS_VERSION,
+      packageScope: 'staging-team',
+      packageStatus: 'active',
+    };
+    const granted = authorizedPackageScopes({
+      ...identity,
+      grants: [{ scope: 'staging-team', githubId: 'github-42' }],
+    });
+    expect(() =>
+      assertArtifactPromotionIdentity({ ...base, authorizedPackageScopes: granted }),
+    ).not.toThrow();
+
+    const revoked = authorizedPackageScopes({ ...identity, grants: [] });
+    expect(() =>
+      assertArtifactPromotionIdentity({ ...base, authorizedPackageScopes: revoked }),
+    ).toThrow(LemonizeError);
+  });
+
+  it.each([
+    ['owner mismatch', { packageOwnerId: 'user-2' }],
+    ['publisher mismatch', { versionPublisherId: 'user-2' }],
+    ['suspended account', { userStatus: 'clerk_suspended' }],
+    ['consumer role', { role: 'consumer' }],
+    ['stale terms', { acceptedTermsVersion: '2026-01-01' }],
+    ['blocked package', { packageStatus: 'blocked' }],
+  ])('blocks scanner promotion for %s', (_label, override) => {
+    expect(() =>
+      assertArtifactPromotionIdentity({
+        publisherId: 'user-1',
+        packageOwnerId: 'user-1',
+        versionPublisherId: 'user-1',
+        userStatus: 'active',
+        role: 'publisher',
+        acceptedTermsVersion: CURRENT_TERMS_VERSION,
+        authorizedPackageScopes: ['alice'],
+        packageScope: 'alice',
+        packageStatus: 'active',
+        ...override,
+      }),
+    ).toThrow(LemonizeError);
   });
 
   it('generates non-reusable staging object keys beneath one reservation', () => {
@@ -124,32 +269,40 @@ describe('publish capability boundaries', () => {
   });
 
   it('enforces bounded package, reservation, and byte quotas', () => {
-    expect(() => assertPublishQuota({
-      packageCount: PUBLISH_QUOTAS.maxPackages - 1,
-      liveReservations: PUBLISH_QUOTAS.maxLiveReservations - 1,
-      storedAndReservedBytes: PUBLISH_QUOTAS.maxStoredAndReservedBytes - 1,
-      addsPackage: true,
-      additionalBytes: 1,
-    })).not.toThrow();
-    expect(() => assertPublishQuota({
-      packageCount: PUBLISH_QUOTAS.maxPackages,
-      liveReservations: 0,
-      storedAndReservedBytes: 0,
-      addsPackage: true,
-    })).toThrow();
-    expect(() => assertPublishQuota({
-      packageCount: 1,
-      liveReservations: PUBLISH_QUOTAS.maxLiveReservations,
-      storedAndReservedBytes: 0,
-      addsPackage: false,
-    })).toThrow();
-    expect(() => assertPublishQuota({
-      packageCount: 1,
-      liveReservations: 0,
-      storedAndReservedBytes: PUBLISH_QUOTAS.maxStoredAndReservedBytes,
-      addsPackage: false,
-      additionalBytes: 1,
-    })).toThrow();
+    expect(() =>
+      assertPublishQuota({
+        packageCount: PUBLISH_QUOTAS.maxPackages - 1,
+        liveReservations: PUBLISH_QUOTAS.maxLiveReservations - 1,
+        storedAndReservedBytes: PUBLISH_QUOTAS.maxStoredAndReservedBytes - 1,
+        addsPackage: true,
+        additionalBytes: 1,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPublishQuota({
+        packageCount: PUBLISH_QUOTAS.maxPackages,
+        liveReservations: 0,
+        storedAndReservedBytes: 0,
+        addsPackage: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      assertPublishQuota({
+        packageCount: 1,
+        liveReservations: PUBLISH_QUOTAS.maxLiveReservations,
+        storedAndReservedBytes: 0,
+        addsPackage: false,
+      }),
+    ).toThrow();
+    expect(() =>
+      assertPublishQuota({
+        packageCount: 1,
+        liveReservations: 0,
+        storedAndReservedBytes: PUBLISH_QUOTAS.maxStoredAndReservedBytes,
+        addsPackage: false,
+        additionalBytes: 1,
+      }),
+    ).toThrow();
     expect(PUBLISH_QUOTAS).toMatchObject({
       maxPackages: 5,
       maxVersionsPerPackage: 20,

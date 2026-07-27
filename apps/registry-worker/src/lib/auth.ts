@@ -3,11 +3,7 @@ import { hashToken, unauthorized, forbidden, rateLimited, TOKEN_PREFIX } from '@
 import { AppwriteError, AppwriteQuery } from './appwrite.js';
 import type { RegistryRow, UserData } from './appwrite-types.js';
 import { verifyClerkToken } from './clerk-auth.js';
-import {
-  type AppBindings,
-  type RegistryRole,
-  type TokenScope,
-} from './env.js';
+import { type AppBindings, type RegistryRole, type TokenScope } from './env.js';
 import { registryRepository } from './registry.js';
 import {
   CURRENT_TERMS_VERSION,
@@ -16,6 +12,12 @@ import {
 } from './account-policy.js';
 import { checkDistributedRateLimit, clientIp } from './ratelimit.js';
 import { activeApiTokenRoot } from './api-token.js';
+import {
+  authorizedPackageScopes,
+  packageScopeReservedForOther,
+  profileReconciliationCachePolicy,
+  type PackageScopeGrant,
+} from './package-scope-grants.js';
 
 const ALL_SCOPES: TokenScope[] = ['read', 'publish', 'manage:packages', 'manage:tokens'];
 const NAMESPACE_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -29,6 +31,7 @@ interface ClerkEmailAddress {
 interface ClerkExternalAccount {
   provider?: unknown;
   username?: unknown;
+  provider_user_id?: unknown;
   external_id?: unknown;
 }
 
@@ -44,6 +47,14 @@ interface ClerkProfile {
   email: string;
   githubUsername: string | null;
   githubId: string | null;
+}
+
+/** Read Clerk's current provider user id while accepting its legacy field name. */
+export function clerkGithubId(account: unknown): string | null {
+  if (!account || typeof account !== 'object' || Array.isArray(account)) return null;
+  const external = account as ClerkExternalAccount;
+  const value = external.provider_user_id ?? external.external_id;
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : null;
 }
 
 class InactiveClerkUserError extends Error {
@@ -92,6 +103,14 @@ function setIdentity(
   c.set('clerkId', input.clerkId ?? user.clerkId);
   c.set('email', user.email);
   c.set('namespace', user.namespace);
+  c.set(
+    'authorizedPackageScopes',
+    authorizedPackageScopes({
+      namespace: user.namespace,
+      githubId: user.githubId,
+      grants: c.get('config').packageScopeGrants,
+    }),
+  );
   c.set('role', role);
   c.set('acceptedTermsVersion', user.acceptedTermsVersion ?? null);
   c.set('tokenId', input.tokenId);
@@ -120,10 +139,14 @@ async function authenticateApiToken(c: Context<AppBindings>, token: string): Pro
   if (!scopes) return false;
   let user = await repo.users.getOrNull(row.userId);
   if (!user) return false;
+  const reconciliationCache = profileReconciliationCachePolicy({
+    clerkId: user.clerkId,
+    githubId: user.githubId,
+    grants: c.get('config').packageScopeGrants,
+  });
   let profileRecentlyReconciled = false;
   try {
-    profileRecentlyReconciled =
-      (await c.env.KV.get(`clerk-profile-reconciled:${user.clerkId}`)) === '1';
+    profileRecentlyReconciled = (await c.env.KV.get(reconciliationCache.key)) === '1';
   } catch {
     // Fail toward the authoritative Clerk profile rather than stale eligibility.
   }
@@ -138,8 +161,8 @@ async function authenticateApiToken(c: Context<AppBindings>, token: string): Pro
       );
       return false;
     }
-    await c.env.KV.put(`clerk-profile-reconciled:${user.clerkId}`, '1', {
-      expirationTtl: 900,
+    await c.env.KV.put(reconciliationCache.key, '1', {
+      expirationTtl: reconciliationCache.ttlSeconds,
     }).catch(() => undefined);
   }
   if (!(await clerkUserIsActive(c, user))) return false;
@@ -153,14 +176,16 @@ async function authenticateApiToken(c: Context<AppBindings>, token: string): Pro
     user.role = reconciledRole;
   }
 
-  if (!setIdentity(c, user, {
-    authType: 'api_token',
-    tokenId: row.$id,
-    tokenParentId: row.parentTokenId ?? undefined,
-    tokenRootId: rootTokenId,
-    tokenScopes: scopes,
-    tokenExpiresAt: row.expiresAt,
-  })) {
+  if (
+    !setIdentity(c, user, {
+      authType: 'api_token',
+      tokenId: row.$id,
+      tokenParentId: row.parentTokenId ?? undefined,
+      tokenRootId: rootTokenId,
+      tokenScopes: scopes,
+      tokenExpiresAt: row.expiresAt,
+    })
+  ) {
     return false;
   }
   const lastTouch = tokenTouches.get(row.$id) ?? 0;
@@ -189,7 +214,10 @@ async function fetchClerkUser(
   return (await response.json()) as ClerkUserResponse;
 }
 
-async function fetchClerkProfile(env: AppBindings['Bindings'], clerkId: string): Promise<ClerkProfile> {
+async function fetchClerkProfile(
+  env: AppBindings['Bindings'],
+  clerkId: string,
+): Promise<ClerkProfile> {
   const body = await fetchClerkUser(env, clerkId);
   if (!body || body.banned === true || body.locked === true) {
     throw new InactiveClerkUserError();
@@ -198,8 +226,10 @@ async function fetchClerkProfile(env: AppBindings['Bindings'], clerkId: string):
   const addresses = Array.isArray(body.email_addresses)
     ? (body.email_addresses as ClerkEmailAddress[])
     : [];
-  const primary = addresses.find((item) => item.id === body.primary_email_address_id) ?? addresses[0];
-  const email = typeof primary?.email_address === 'string' ? primary.email_address.toLowerCase() : '';
+  const primary =
+    addresses.find((item) => item.id === body.primary_email_address_id) ?? addresses[0];
+  const email =
+    typeof primary?.email_address === 'string' ? primary.email_address.toLowerCase() : '';
   if (!email || email.length > 320) throw new Error('Clerk user has no usable email address.');
 
   const external = Array.isArray(body.external_accounts)
@@ -212,12 +242,7 @@ async function fetchClerkProfile(env: AppBindings['Bindings'], clerkId: string):
     typeof github?.username === 'string' && github.username.length <= 64
       ? github.username.toLowerCase()
       : null;
-  const githubId =
-    typeof github?.external_id === 'string' &&
-    github.external_id.length > 0 &&
-    github.external_id.length <= 128
-      ? github.external_id
-      : null;
+  const githubId = clerkGithubId(github);
   return { email, githubUsername, githubId };
 }
 
@@ -238,7 +263,9 @@ async function clerkUserIsActive(
   } else {
     const clerkUser = await fetchClerkUser(c.env, user.clerkId);
     active = Boolean(clerkUser && clerkUser.banned !== true && clerkUser.locked !== true);
-    await c.env.KV.put(key, active ? '1' : '0', { expirationTtl: active ? 900 : 60 }).catch(() => undefined);
+    await c.env.KV.put(key, active ? '1' : '0', { expirationTtl: active ? 900 : 60 }).catch(
+      () => undefined,
+    );
   }
 
   const repo = registryRepository(c.env);
@@ -272,6 +299,29 @@ export async function namespaceWithSuffix(base: string, stableIdentityId: string
   return `${base.slice(0, 53).replace(/-+$/g, '')}-${suffix}`;
 }
 
+async function namespaceWithUnreservedSuffix(input: {
+  base: string;
+  stableIdentityId: string;
+  githubId?: string | null;
+  grants: readonly PackageScopeGrant[];
+  startAttempt?: number;
+}): Promise<string> {
+  for (let attempt = input.startAttempt ?? 0; attempt < 10; attempt += 1) {
+    const seed = attempt === 0 ? input.stableIdentityId : `${input.stableIdentityId}:${attempt}`;
+    const candidate = await namespaceWithSuffix(input.base, seed);
+    if (
+      !packageScopeReservedForOther({
+        grants: input.grants,
+        scope: candidate,
+        githubId: input.githubId,
+      })
+    ) {
+      return candidate;
+    }
+  }
+  throw new Error('Unable to allocate a namespace outside protected package scopes.');
+}
+
 export async function provisionalNamespace(clerkId: string): Promise<string> {
   return `user-${(await hashToken(`provisional:${clerkId}`)).slice(0, 12)}`;
 }
@@ -283,9 +333,7 @@ async function provisionClerkUser(
   const repo = registryRepository(c.env);
   const profile = await fetchClerkProfile(c.env, clerkId);
   const existingByClerk = await repo.getUserByClerkId(clerkId);
-  const existingByGithub = profile.githubId
-    ? await repo.getUserByGithubId(profile.githubId)
-    : null;
+  const existingByGithub = profile.githubId ? await repo.getUserByGithubId(profile.githubId) : null;
   if (existingByClerk && existingByGithub && existingByClerk.$id !== existingByGithub.$id) {
     throw new Error('The linked GitHub account already belongs to another registry identity.');
   }
@@ -318,10 +366,20 @@ async function provisionClerkUser(
     if (mayAdoptGithubNamespace && profile.githubId) {
       const base = githubBase ?? (await provisionalNamespace(clerkId));
       const occupied = await repo.getUserByNamespace(base);
+      const grantReserved = packageScopeReservedForOther({
+        grants: cfg.packageScopeGrants,
+        scope: base,
+        githubId: profile.githubId,
+      });
       adoptedNamespace =
-        !occupied || occupied.$id === existing.$id
+        (!occupied || occupied.$id === existing.$id) && !grantReserved
           ? base
-          : await namespaceWithSuffix(base, profile.githubId);
+          : await namespaceWithUnreservedSuffix({
+              base,
+              stableIdentityId: profile.githubId,
+              githubId: profile.githubId,
+              grants: cfg.packageScopeGrants,
+            });
     }
     const needsNamespaceClaimMarker =
       !existing.namespaceClaimedAt && Boolean(existing.githubId || mayAdoptGithubNamespace);
@@ -367,13 +425,31 @@ async function provisionClerkUser(
       // external-id suffix is the only retry and is stable across sessions.
       return repo.users.update(existing.$id, {
         ...update,
-        namespace: await namespaceWithSuffix(githubBase, profile.githubId),
+        namespace: await namespaceWithUnreservedSuffix({
+          base: githubBase,
+          stableIdentityId: profile.githubId,
+          githubId: profile.githubId,
+          grants: cfg.packageScopeGrants,
+          startAttempt: adoptedNamespace === githubBase ? 0 : 1,
+        }),
       });
     }
   }
 
-  const baseNamespace =
+  const preferredNamespace =
     normalizedNamespace(profile.githubUsername) ?? (await provisionalNamespace(clerkId));
+  const initialNamespace = packageScopeReservedForOther({
+    grants: cfg.packageScopeGrants,
+    scope: preferredNamespace,
+    githubId: profile.githubId,
+  })
+    ? await namespaceWithUnreservedSuffix({
+        base: preferredNamespace,
+        stableIdentityId: profile.githubId ?? clerkId,
+        githubId: profile.githubId,
+        grants: cfg.packageScopeGrants,
+      })
+    : preferredNamespace;
   const data = (namespace: string): UserData => ({
     clerkId,
     email: profile.email,
@@ -391,7 +467,7 @@ async function provisionClerkUser(
   });
 
   try {
-    return await repo.users.create(data(baseNamespace));
+    return await repo.users.create(data(initialNamespace));
   } catch (error) {
     if (!(error instanceof AppwriteError) || error.status !== 409) throw error;
     const raced = await repo.getUserByClerkId(clerkId);
@@ -401,9 +477,30 @@ async function provisionClerkUser(
       if (githubRace) return githubRace;
     }
     return repo.users.create(
-      data(await namespaceWithSuffix(baseNamespace, profile.githubId ?? clerkId)),
+      data(
+        await namespaceWithUnreservedSuffix({
+          base: preferredNamespace,
+          stableIdentityId: profile.githubId ?? clerkId,
+          githubId: profile.githubId,
+          grants: cfg.packageScopeGrants,
+          startAttempt: initialNamespace === preferredNamespace ? 0 : 1,
+        }),
+      ),
     );
   }
+}
+
+/**
+ * Refresh a stored registry identity from Clerk without consulting the API-token
+ * reconciliation cache. Security-sensitive background work uses this immediately
+ * before making an artifact public so a GitHub unlink or account suspension fails
+ * closed even when the upload was authorized earlier.
+ */
+export async function refreshClerkUserForAuthorization(
+  c: Context<AppBindings>,
+  clerkId: string,
+): Promise<RegistryRow<'users'>> {
+  return provisionClerkUser(c, clerkId);
 }
 
 async function authenticateClerk(c: Context<AppBindings>, token: string): Promise<boolean> {
@@ -419,13 +516,18 @@ async function authenticateClerk(c: Context<AppBindings>, token: string): Promis
       expirationTtl: 900,
     }).catch(() => undefined);
     if (!(await clerkUserIsActive(c, user))) return false;
-    if (!setIdentity(c, user, {
-      authType: 'clerk',
-      clerkId: verified.userId,
-      tokenScopes: ALL_SCOPES,
-    })) return false;
+    if (
+      !setIdentity(c, user, {
+        authType: 'clerk',
+        clerkId: verified.userId,
+        tokenScopes: ALL_SCOPES,
+      })
+    )
+      return false;
     c.executionCtx.waitUntil(
-      registryRepository(c.env).users.update(user.$id, { lastLoginAt: new Date().toISOString() }).catch(() => undefined),
+      registryRepository(c.env)
+        .users.update(user.$id, { lastLoginAt: new Date().toISOString() })
+        .catch(() => undefined),
     );
     return true;
   } catch {

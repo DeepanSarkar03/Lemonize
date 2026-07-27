@@ -12,7 +12,7 @@ describe('maintenance capability boundaries', () => {
       assertMaintainerIdentity({
         role: 'publisher',
         userId: 'user-1',
-        namespace: 'alice',
+        authorizedPackageScopes: ['alice'],
         packageOwnerId: 'user-1',
         packageScope: '',
       }),
@@ -24,7 +24,7 @@ describe('maintenance capability boundaries', () => {
       assertMaintainerIdentity({
         role: 'publisher',
         userId: 'user-1',
-        namespace: 'alice',
+        authorizedPackageScopes: ['alice'],
         packageOwnerId: 'user-1',
         packageScope: 'bob',
       }),
@@ -36,9 +36,21 @@ describe('maintenance capability boundaries', () => {
       assertMaintainerIdentity({
         role: 'publisher',
         userId: 'user-1',
-        namespace: 'Alice',
+        authorizedPackageScopes: ['Alice'],
         packageOwnerId: 'user-1',
         packageScope: 'alice',
+      }),
+    ).not.toThrow();
+  });
+
+  it('allows an owner to maintain an explicitly granted package scope', () => {
+    expect(() =>
+      assertMaintainerIdentity({
+        role: 'publisher',
+        userId: 'user-1',
+        authorizedPackageScopes: ['alice', 'staging-team'],
+        packageOwnerId: 'user-1',
+        packageScope: 'staging-team',
       }),
     ).not.toThrow();
   });
@@ -48,7 +60,7 @@ describe('maintenance capability boundaries', () => {
       assertMaintainerIdentity({
         role: 'admin',
         userId: 'admin-1',
-        namespace: 'admin',
+        authorizedPackageScopes: ['admin'],
         packageOwnerId: 'user-1',
         packageScope: '',
       }),

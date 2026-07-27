@@ -52,6 +52,7 @@ Configure the following independently on the staging and production GitHub envir
 | Variable | `MAX_GLOBAL_ARTIFACT_BYTES`                                              | Serialized total published-and-reserved ceiling; <=70% of lower storage entitlement and <=7 GiB      |
 | Variable | `RATE_LIMIT_READS_PER_MINUTE`, `RATE_LIMIT_WRITES_PER_MINUTE`            | Positive integer rate limits                                                                         |
 | Variable | `ADMIN_CLERK_IDS`, `REGISTRY_MODE`                                       | Immutable Clerk-subject administrators and public/read-only policy                                   |
+| Variable | `PACKAGE_SCOPE_GRANTS_JSON`                                               | Required strict package-scope grant array keyed to immutable GitHub external IDs; use explicit `[]`  |
 | Variable | `NPM_PROXY_BASE_URL`                                                     | Exact environment npm-proxy origin used by deployment smoke tests                                    |
 | Variable | `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`                                     | Exact Vercel project linkage                                                                         |
 | Variable | `APPWRITE_ENDPOINT`, `APPWRITE_PROJECT_ID`, `APPWRITE_DATABASE_ID`       | Exact Appwrite endpoint/project/TablesDB linkage                                                     |
@@ -59,6 +60,8 @@ Configure the following independently on the staging and production GitHub envir
 | Variable | `CLERK_ISSUER`, `CLERK_AUTHORIZED_PARTIES`                               | Exact Clerk issuer and accepted web origins                                                          |
 
 There is no publisher email or username allowlist. In `public` mode, publisher role assignment requires the stable GitHub external ID returned by Clerk; accounts without GitHub remain consumers. Require the intended Clerk verification/legal-consent flow, and use only immutable Clerk subjects in `ADMIN_CLERK_IDS` for administrators.
+
+`PACKAGE_SCOPE_GRANTS_JSON` is a required, nonblank, strict array of `{ "scope": "scope-without-at", "githubId": "stable-provider-id" }` entries. A scope may appear once, must use the canonical lowercase namespace grammar, and must not be reserved. Set it explicitly to `[]` unless the target has completed Clerk/GitHub sign-in and a reviewed read-only collision check confirms that neither another user's primary namespace nor another owner package already claims the scope. Missing, blank, malformed, ambiguous, or duplicate configuration stops deployment rendering and Worker configuration loading. Never substitute a username, email, wildcard, token capability, or administrator grant.
 
 The CLI release workflow publishes `@lemonize/cli` with npm OIDC provenance. The public npm package and exact GitHub trusted-publisher relationship must exist before tagging a release; no long-lived npm token or mutable R2 binary channel is accepted as a substitute.
 

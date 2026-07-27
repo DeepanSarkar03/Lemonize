@@ -14,13 +14,17 @@ import {
 
 describe('public publisher account policy', () => {
   it('fails closed when publishing variables are absent or malformed', () => {
-    const missing = loadConfig({ REGISTRY_MODE: 'public' } as Env);
+    const missing = loadConfig({
+      REGISTRY_MODE: 'public',
+      PACKAGE_SCOPE_GRANTS_JSON: '[]',
+    } as Env);
     expect(missing.registryMode).toBe('public');
     expect(missing.allowPublicPublish).toBe(false);
 
     const malformed = loadConfig({
       REGISTRY_MODE: 'unexpected',
       ALLOW_PUBLIC_PUBLISH: 'true',
+      PACKAGE_SCOPE_GRANTS_JSON: '[]',
     } as Env);
     expect(malformed.registryMode).toBe('read_only');
   });
