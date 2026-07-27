@@ -261,6 +261,8 @@ if run_drill "$preexisting_state" >/dev/null 2>&1; then
   echo 'restore drill accepted a pre-existing target' >&2
   exit 1
 fi
+test -e "$preexisting_state/commands.log"
+grep -Fq 'tables-db list' "$preexisting_state/commands.log"
 if grep -Fq 'tables-db delete --database-id restore-dst-12345-1' "$preexisting_state/commands.log"; then
   echo 'restore drill deleted a target it did not create' >&2
   exit 1
