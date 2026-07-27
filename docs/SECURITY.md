@@ -71,12 +71,13 @@ Legacy unscoped packages are compatibility data only. They remain readable and d
 
 ## Appwrite data plane and provider credentials
 
-TablesDB stores users, API tokens, packages, versions, tags, reservations, scan jobs, counters, and audit events. Appwrite's server API key is available only to the Worker; browsers and the CLI never receive it.
+TablesDB stores users, API tokens, packages, versions, tags, reservations, scan jobs, counters, and audit events. Appwrite's runtime server API key is available only to the Worker; browsers and the CLI never receive it. Protected CI uses separate, responsibility-specific keys.
 
 Provider credentials are split by responsibility and environment:
 
 - `APPWRITE_DEPLOY_API_KEY`: protected CI only; schema and function administration.
 - `APPWRITE_RUNTIME_API_KEY`: injected into the Worker as `APPWRITE_API_KEY`; only required row reads/writes, scanner execution creation, rejected/expired quarantine cleanup, and expired device-token cleanup from its Durable Object.
+- `APPWRITE_RESTORE_DATA_API_KEY`: staging restore-drill CI only; `rows.read` and `rows.write`, with the drill script pinning every operation to generated synthetic resource IDs.
 - `APPWRITE_BACKUP_API_KEY`: backup policy, archive, and restoration operations only.
 - the scanner uses Appwrite's execution-scoped injected key with only `files.read` and `files.write`; it does not store a long-lived Appwrite key.
 
