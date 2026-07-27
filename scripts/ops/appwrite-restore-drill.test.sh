@@ -53,7 +53,11 @@ if [[ "${1:-}" == client ]]; then
   echo client >> "$FAKE_STATE/commands.log"
   exit 0
 fi
-if [[ "${1:-}" == --json ]]; then shift; fi
+output_mode=
+if [[ "${1:-}" == --json || "${1:-}" == --raw ]]; then
+  output_mode=$1
+  shift
+fi
 printf '%q ' "$@" >> "$FAKE_STATE/commands.log"
 printf '\n' >> "$FAKE_STATE/commands.log"
 
@@ -241,6 +245,8 @@ case "$service:$operation" in
     ;;
   backups:create-restoration)
     require_active_key test-backup-key
+    printf '%s' "$output_mode" > "$FAKE_STATE/create-restoration-output-mode"
+    [[ "$output_mode" == --raw ]]
     [[ -f "$FAKE_STATE/archive-row" ]]
     printf 'true' > "$FAKE_STATE/target"
     cp "$FAKE_STATE/archive-row" "$FAKE_STATE/target-row"
@@ -265,13 +271,14 @@ case "$service:$operation" in
       let options = { tablesdb: { database } };
       if (process.env.FAKE_STRING_RESTORATION_OPTIONS === "1") options = JSON.stringify(options);
       if (process.env.FAKE_INVALID_RESTORATION_OPTIONS === "1") options = "{";
-      process.stdout.write(JSON.stringify({
+      const restoration = {
         $id: "restoration-1",
         archiveId: "archive-1",
         services: ["tablesdb"],
-        status: "pending",
-        options
-      }));
+        status: "pending"
+      };
+      if (process.env.FAKE_MISSING_RESTORATION_OPTIONS !== "1") restoration.options = options;
+      process.stdout.write(JSON.stringify(restoration));
     ' "$source_id" "$target_id" "$target_name"
     ;;
   backups:get-restoration)
@@ -322,6 +329,7 @@ test ! -e "$success_state/target"
 test ! -e "$success_state/archive"
 restoration_command_count=$(grep -c '^backups create-restoration ' "$success_state/commands.log")
 test "$restoration_command_count" -eq 1
+test "$(<"$success_state/create-restoration-output-mode")" == --raw
 restoration_command=$(grep '^backups create-restoration ' "$success_state/commands.log")
 destination_flag_count=$(grep -oE -- '--new-resource-id(=| )[^ ]+' <<<"$restoration_command" | wc -l)
 test "$destination_flag_count" -eq 1
@@ -546,6 +554,35 @@ fi
 if grep -Eq '^(tables-db delete |backups delete-archive )' \
   "$invalid_restoration_options_state/commands.log"; then
   echo 'restore drill deleted resources after invalid restoration options JSON' >&2
+  exit 1
+fi
+
+missing_restoration_options_state="$tmp/missing-restoration-options"
+if missing_restoration_options_output=$(run_drill "$missing_restoration_options_state" \
+  FAKE_MISSING_RESTORATION_OPTIONS=1 2>&1); then
+  echo 'restore drill accepted a restoration response without destination options' >&2
+  exit 1
+fi
+test -e "$missing_restoration_options_state/source"
+test -e "$missing_restoration_options_state/target"
+test -e "$missing_restoration_options_state/archive"
+grep -Fq 'Restore initiation returned an unexpected destination' \
+  <<<"$missing_restoration_options_output"
+grep -Fq 'Automatic cleanup was deferred' <<<"$missing_restoration_options_output"
+grep -Fq 'Preserved source database ID: restore-src-12345-1' \
+  <<<"$missing_restoration_options_output"
+grep -Fq 'Preserved target database ID: restore-dst-12345-1' \
+  <<<"$missing_restoration_options_output"
+grep -Fq 'Preserved archive ID: archive-1' <<<"$missing_restoration_options_output"
+grep -Fq 'Preserved restoration ID: restoration-1' <<<"$missing_restoration_options_output"
+if grep -Fq 'Reported restoration target database ID:' \
+  <<<"$missing_restoration_options_output"; then
+  echo 'restore drill reported a destination absent from restoration options' >&2
+  exit 1
+fi
+if grep -Eq '^(tables-db delete |backups delete-archive )' \
+  "$missing_restoration_options_state/commands.log"; then
+  echo 'restore drill deleted resources after destination options were omitted' >&2
   exit 1
 fi
 

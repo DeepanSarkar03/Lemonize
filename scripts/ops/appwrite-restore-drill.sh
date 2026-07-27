@@ -535,7 +535,8 @@ configure_client "$backup_api_key"
 target_owned=1
 restoration_started=1
 cleanup_deferred_reason="restoration did not reach a terminal state"
-"$APPWRITE_BIN" --json backups create-restoration \
+# The Appwrite CLI's --json renderer drops object-valued fields such as options.
+"$APPWRITE_BIN" --raw backups create-restoration \
   --archive-id "$archive_id" \
   --services tablesdb \
   --new-resource-id "$target_database_id" \
