@@ -157,6 +157,7 @@ case "$service:$operation" in
     case "$id" in
       "$source_id") rm -f "$FAKE_STATE/source" "$FAKE_STATE/source-row" ;;
       "$target_id") rm -f "$FAKE_STATE/target" "$FAKE_STATE/target-row" ;;
+      unexpected-target|second-target) rm -f "$FAKE_STATE/reported-target-$id" ;;
       *) echo "refusing unexpected delete $id" >&2; exit 1 ;;
     esac
     printf '{}'
@@ -243,7 +244,35 @@ case "$service:$operation" in
     [[ -f "$FAKE_STATE/archive-row" ]]
     printf 'true' > "$FAKE_STATE/target"
     cp "$FAKE_STATE/archive-row" "$FAKE_STATE/target-row"
-    printf '{"$id":"restoration-1","archiveId":"archive-1","services":["tablesdb"],"status":"pending","options":"{\\"newResourceId\\":\\"%s\\",\\"newResourceName\\":\\"%s\\"}"}' "$target_id" "$target_name"
+    if [[ "${FAKE_BAD_RESTORATION_NEW_ID:-0}" == 1 ]]; then
+      printf 'true' > "$FAKE_STATE/reported-target-unexpected-target"
+    fi
+    if [[ "${FAKE_AMBIGUOUS_RESTORATION_OPTIONS:-0}" == 1 ]]; then
+      printf 'true' > "$FAKE_STATE/reported-target-second-target"
+    fi
+    node -e '
+      const [sourceId, targetId, targetName] = process.argv.slice(1);
+      let oldId = sourceId;
+      let newId = targetId;
+      let newName = targetName;
+      if (process.env.FAKE_BAD_RESTORATION_OLD_ID === "1") oldId = "unexpected-source";
+      if (process.env.FAKE_BAD_RESTORATION_NEW_ID === "1") newId = "unexpected-target";
+      if (process.env.FAKE_BAD_RESTORATION_NAME === "1") newName = "Unexpected target";
+      const database = [{ oldId, newId, newName }];
+      if (process.env.FAKE_AMBIGUOUS_RESTORATION_OPTIONS === "1") {
+        database.push({ oldId, newId: "second-target", newName });
+      }
+      let options = { tablesdb: { database } };
+      if (process.env.FAKE_STRING_RESTORATION_OPTIONS === "1") options = JSON.stringify(options);
+      if (process.env.FAKE_INVALID_RESTORATION_OPTIONS === "1") options = "{";
+      process.stdout.write(JSON.stringify({
+        $id: "restoration-1",
+        archiveId: "archive-1",
+        services: ["tablesdb"],
+        status: "pending",
+        options
+      }));
+    ' "$source_id" "$target_id" "$target_name"
     ;;
   backups:get-restoration)
     require_active_key test-backup-key
@@ -314,6 +343,13 @@ while IFS= read -r command; do
     fi
   fi
 done < "$success_state/commands.log"
+
+string_options_state="$tmp/string-options"
+string_options_output=$(run_drill "$string_options_state" FAKE_STRING_RESTORATION_OPTIONS=1)
+grep -Fq 'restoration was verified and all drill resources were removed' <<<"$string_options_output"
+test ! -e "$string_options_state/source"
+test ! -e "$string_options_state/target"
+test ! -e "$string_options_state/archive"
 
 transient_state="$tmp/transient-reads"
 transient_output=$(run_drill "$transient_state" FAKE_TRANSIENT_READ_ERRORS=1)
@@ -490,6 +526,66 @@ if grep -Eq '^(tables-db delete --database-id restore-(src|dst)-12345-1|backups 
   echo 'restore drill deleted resources while restoration was still in flight' >&2
   exit 1
 fi
+
+invalid_restoration_options_state="$tmp/invalid-restoration-options"
+if invalid_restoration_options_output=$(run_drill "$invalid_restoration_options_state" \
+  FAKE_INVALID_RESTORATION_OPTIONS=1 2>&1); then
+  echo 'restore drill accepted invalid restoration options JSON' >&2
+  exit 1
+fi
+test -e "$invalid_restoration_options_state/source"
+test -e "$invalid_restoration_options_state/target"
+test -e "$invalid_restoration_options_state/archive"
+grep -Fq 'Restore initiation returned invalid options JSON' <<<"$invalid_restoration_options_output"
+grep -Fq 'Automatic cleanup was deferred' <<<"$invalid_restoration_options_output"
+grep -Fq 'Preserved restoration ID: restoration-1' <<<"$invalid_restoration_options_output"
+if grep -Fq 'Reported restoration target database ID:' <<<"$invalid_restoration_options_output"; then
+  echo 'restore drill reported an unvalidated destination from invalid options JSON' >&2
+  exit 1
+fi
+if grep -Eq '^(tables-db delete |backups delete-archive )' \
+  "$invalid_restoration_options_state/commands.log"; then
+  echo 'restore drill deleted resources after invalid restoration options JSON' >&2
+  exit 1
+fi
+
+for destination_case in \
+  'old-id|FAKE_BAD_RESTORATION_OLD_ID=1|restore-dst-12345-1' \
+  'new-id|FAKE_BAD_RESTORATION_NEW_ID=1|unexpected-target' \
+  'name|FAKE_BAD_RESTORATION_NAME=1|restore-dst-12345-1' \
+  'ambiguous|FAKE_AMBIGUOUS_RESTORATION_OPTIONS=1|restore-dst-12345-1'; do
+  IFS='|' read -r destination_name destination_assignment reported_target_id <<<"$destination_case"
+  bad_restoration_options_state="$tmp/bad-restoration-$destination_name"
+  if bad_restoration_options_output=$(run_drill "$bad_restoration_options_state" \
+    "$destination_assignment" 2>&1); then
+    echo "restore drill accepted a mismatched restoration destination: $destination_name" >&2
+    exit 1
+  fi
+  test -e "$bad_restoration_options_state/source"
+  test -e "$bad_restoration_options_state/target"
+  test -e "$bad_restoration_options_state/archive"
+  grep -Fq 'Restore initiation returned an unexpected destination' \
+    <<<"$bad_restoration_options_output"
+  grep -Fq 'Automatic cleanup was deferred' <<<"$bad_restoration_options_output"
+  grep -Fq 'Preserved restoration ID: restoration-1' <<<"$bad_restoration_options_output"
+  grep -Fq "Reported restoration target database ID: $reported_target_id" \
+    <<<"$bad_restoration_options_output"
+  case "$destination_name" in
+    new-id)
+      test -e "$bad_restoration_options_state/reported-target-unexpected-target"
+      ;;
+    ambiguous)
+      grep -Fq 'Reported restoration target database ID: second-target' \
+        <<<"$bad_restoration_options_output"
+      test -e "$bad_restoration_options_state/reported-target-second-target"
+      ;;
+  esac
+  if grep -Eq '^(tables-db delete |backups delete-archive )' \
+    "$bad_restoration_options_state/commands.log"; then
+    echo "restore drill deleted resources after a restoration destination mismatch: $destination_name" >&2
+    exit 1
+  fi
+done
 
 restoration_failure_state="$tmp/restoration-failure"
 if run_drill "$restoration_failure_state" FAKE_RESTORATION_STATUS=failed >/dev/null 2>&1; then
