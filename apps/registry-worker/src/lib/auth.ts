@@ -3,11 +3,7 @@ import { hashToken, unauthorized, forbidden, rateLimited, TOKEN_PREFIX } from '@
 import { AppwriteError, AppwriteQuery } from './appwrite.js';
 import type { RegistryRow, UserData } from './appwrite-types.js';
 import { verifyClerkToken } from './clerk-auth.js';
-import {
-  type AppBindings,
-  type RegistryRole,
-  type TokenScope,
-} from './env.js';
+import { type AppBindings, type RegistryRole, type TokenScope } from './env.js';
 import { registryRepository } from './registry.js';
 import {
   CURRENT_TERMS_VERSION,
@@ -180,14 +176,16 @@ async function authenticateApiToken(c: Context<AppBindings>, token: string): Pro
     user.role = reconciledRole;
   }
 
-  if (!setIdentity(c, user, {
-    authType: 'api_token',
-    tokenId: row.$id,
-    tokenParentId: row.parentTokenId ?? undefined,
-    tokenRootId: rootTokenId,
-    tokenScopes: scopes,
-    tokenExpiresAt: row.expiresAt,
-  })) {
+  if (
+    !setIdentity(c, user, {
+      authType: 'api_token',
+      tokenId: row.$id,
+      tokenParentId: row.parentTokenId ?? undefined,
+      tokenRootId: rootTokenId,
+      tokenScopes: scopes,
+      tokenExpiresAt: row.expiresAt,
+    })
+  ) {
     return false;
   }
   const lastTouch = tokenTouches.get(row.$id) ?? 0;
@@ -216,7 +214,10 @@ async function fetchClerkUser(
   return (await response.json()) as ClerkUserResponse;
 }
 
-async function fetchClerkProfile(env: AppBindings['Bindings'], clerkId: string): Promise<ClerkProfile> {
+async function fetchClerkProfile(
+  env: AppBindings['Bindings'],
+  clerkId: string,
+): Promise<ClerkProfile> {
   const body = await fetchClerkUser(env, clerkId);
   if (!body || body.banned === true || body.locked === true) {
     throw new InactiveClerkUserError();
@@ -225,8 +226,10 @@ async function fetchClerkProfile(env: AppBindings['Bindings'], clerkId: string):
   const addresses = Array.isArray(body.email_addresses)
     ? (body.email_addresses as ClerkEmailAddress[])
     : [];
-  const primary = addresses.find((item) => item.id === body.primary_email_address_id) ?? addresses[0];
-  const email = typeof primary?.email_address === 'string' ? primary.email_address.toLowerCase() : '';
+  const primary =
+    addresses.find((item) => item.id === body.primary_email_address_id) ?? addresses[0];
+  const email =
+    typeof primary?.email_address === 'string' ? primary.email_address.toLowerCase() : '';
   if (!email || email.length > 320) throw new Error('Clerk user has no usable email address.');
 
   const external = Array.isArray(body.external_accounts)
@@ -260,7 +263,9 @@ async function clerkUserIsActive(
   } else {
     const clerkUser = await fetchClerkUser(c.env, user.clerkId);
     active = Boolean(clerkUser && clerkUser.banned !== true && clerkUser.locked !== true);
-    await c.env.KV.put(key, active ? '1' : '0', { expirationTtl: active ? 900 : 60 }).catch(() => undefined);
+    await c.env.KV.put(key, active ? '1' : '0', { expirationTtl: active ? 900 : 60 }).catch(
+      () => undefined,
+    );
   }
 
   const repo = registryRepository(c.env);
@@ -328,9 +333,7 @@ async function provisionClerkUser(
   const repo = registryRepository(c.env);
   const profile = await fetchClerkProfile(c.env, clerkId);
   const existingByClerk = await repo.getUserByClerkId(clerkId);
-  const existingByGithub = profile.githubId
-    ? await repo.getUserByGithubId(profile.githubId)
-    : null;
+  const existingByGithub = profile.githubId ? await repo.getUserByGithubId(profile.githubId) : null;
   if (existingByClerk && existingByGithub && existingByClerk.$id !== existingByGithub.$id) {
     throw new Error('The linked GitHub account already belongs to another registry identity.');
   }
@@ -487,6 +490,19 @@ async function provisionClerkUser(
   }
 }
 
+/**
+ * Refresh a stored registry identity from Clerk without consulting the API-token
+ * reconciliation cache. Security-sensitive background work uses this immediately
+ * before making an artifact public so a GitHub unlink or account suspension fails
+ * closed even when the upload was authorized earlier.
+ */
+export async function refreshClerkUserForAuthorization(
+  c: Context<AppBindings>,
+  clerkId: string,
+): Promise<RegistryRow<'users'>> {
+  return provisionClerkUser(c, clerkId);
+}
+
 async function authenticateClerk(c: Context<AppBindings>, token: string): Promise<boolean> {
   const cfg = c.get('config');
   if (!cfg.clerkIssuer || cfg.clerkAuthorizedParties.length === 0) return false;
@@ -500,13 +516,18 @@ async function authenticateClerk(c: Context<AppBindings>, token: string): Promis
       expirationTtl: 900,
     }).catch(() => undefined);
     if (!(await clerkUserIsActive(c, user))) return false;
-    if (!setIdentity(c, user, {
-      authType: 'clerk',
-      clerkId: verified.userId,
-      tokenScopes: ALL_SCOPES,
-    })) return false;
+    if (
+      !setIdentity(c, user, {
+        authType: 'clerk',
+        clerkId: verified.userId,
+        tokenScopes: ALL_SCOPES,
+      })
+    )
+      return false;
     c.executionCtx.waitUntil(
-      registryRepository(c.env).users.update(user.$id, { lastLoginAt: new Date().toISOString() }).catch(() => undefined),
+      registryRepository(c.env)
+        .users.update(user.$id, { lastLoginAt: new Date().toISOString() })
+        .catch(() => undefined),
     );
     return true;
   } catch {

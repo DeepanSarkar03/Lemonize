@@ -55,10 +55,12 @@ describe('AppwriteRestClient', () => {
       clerkId: 'clerk_123',
       namespace: 'alice',
     });
-    await appwrite.listRows('users', {
-      queries: [AppwriteQuery.equal('status', 'active'), AppwriteQuery.limit(25)],
-      total: false,
-    }).catch(() => undefined);
+    await appwrite
+      .listRows('users', {
+        queries: [AppwriteQuery.equal('status', 'active'), AppwriteQuery.limit(25)],
+        total: false,
+      })
+      .catch(() => undefined);
 
     expect(calls[0]?.url).toBe(
       'https://fra.cloud.appwrite.io/v1/tablesdb/registry/tables/users/rows',
@@ -66,12 +68,8 @@ describe('AppwriteRestClient', () => {
     expect(new Headers(calls[0]?.init?.headers).get('x-appwrite-project')).toBe(
       'lemonize-prod-2026',
     );
-    expect(new Headers(calls[0]?.init?.headers).get('x-appwrite-key')).toBe(
-      'server-secret-key',
-    );
-    expect(new Headers(calls[0]?.init?.headers).get('x-appwrite-response-format')).toBe(
-      '1.9.5',
-    );
+    expect(new Headers(calls[0]?.init?.headers).get('x-appwrite-key')).toBe('server-secret-key');
+    expect(new Headers(calls[0]?.init?.headers).get('x-appwrite-response-format')).toBe('1.9.5');
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
       rowId: 'row-1',
       data: { clerkId: 'clerk_123', namespace: 'alice' },
@@ -86,9 +84,7 @@ describe('AppwriteRestClient', () => {
   });
 
   it('rejects unsafe query columns and non-finite values before fetch', () => {
-    expect(() => AppwriteQuery.equal('status&queries[]=oops', 'active')).toThrow(
-      AppwriteError,
-    );
+    expect(() => AppwriteQuery.equal('status&queries[]=oops', 'active')).toThrow(AppwriteError);
     expect(() => AppwriteQuery.greaterThan('attempts', Number.POSITIVE_INFINITY)).toThrow(
       'finite JSON values',
     );
@@ -136,7 +132,9 @@ describe('AppwriteRestClient', () => {
     const fetcher: AppwriteFetch = vi.fn(async () => {
       throw new Error('request failed while sending X-Appwrite-Key: leaked');
     });
-    const error = await client(fetcher).getRow('users', 'row-1').catch((caught) => caught);
+    const error = await client(fetcher)
+      .getRow('users', 'row-1')
+      .catch((caught) => caught);
     expect(error).toMatchObject({ kind: 'network_error', status: 0 });
     expect(String(error)).not.toContain('leaked');
   });
@@ -199,6 +197,26 @@ describe('RegistryAppwriteRepository', () => {
       '{"method":"isNull","attribute":"revokedAt"}',
       '{"method":"orderDesc","attribute":"$createdAt"}',
     ]);
+  });
+
+  it('bounds foreign package-scope ownership checks to one row', async () => {
+    let requestedUrl = '';
+    const repo = new RegistryAppwriteRepository(
+      client(async (url) => {
+        requestedUrl = url;
+        return json({ total: 0, rows: [] });
+      }),
+    );
+
+    await repo.getForeignPackageOwner('stape-ai', 'publisher-1');
+
+    const url = new URL(requestedUrl);
+    expect(url.searchParams.getAll('queries[]')).toEqual([
+      '{"method":"equal","attribute":"scope","values":["stape-ai"]}',
+      '{"method":"notEqual","attribute":"ownerId","values":["publisher-1"]}',
+      '{"method":"limit","values":[1]}',
+    ]);
+    expect(url.searchParams.get('total')).toBe('false');
   });
 
   it('orders expired reservations by oldest update before applying cursor limits', async () => {

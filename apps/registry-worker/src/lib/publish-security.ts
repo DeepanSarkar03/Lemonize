@@ -1,4 +1,5 @@
 import { badRequest, forbidden, rateLimited, timingSafeEqual, tooLarge } from '@lemonize/shared';
+import { CURRENT_TERMS_VERSION } from './account-policy.js';
 
 const encoder = new TextEncoder();
 const SIGNATURE = /^v1=[a-f0-9]{64}$/i;
@@ -35,10 +36,18 @@ export function assertPublishQuota(input: {
   ) {
     throw rateLimited(`Package limit of ${PUBLISH_QUOTAS.maxPackages} reached.`);
   }
-  if ((input.addsReservation ?? true) && input.liveReservations >= PUBLISH_QUOTAS.maxLiveReservations) {
-    throw rateLimited(`At most ${PUBLISH_QUOTAS.maxLiveReservations} publishes may be in progress.`);
+  if (
+    (input.addsReservation ?? true) &&
+    input.liveReservations >= PUBLISH_QUOTAS.maxLiveReservations
+  ) {
+    throw rateLimited(
+      `At most ${PUBLISH_QUOTAS.maxLiveReservations} publishes may be in progress.`,
+    );
   }
-  if (input.versionCount !== undefined && input.versionCount >= PUBLISH_QUOTAS.maxVersionsPerPackage) {
+  if (
+    input.versionCount !== undefined &&
+    input.versionCount >= PUBLISH_QUOTAS.maxVersionsPerPackage
+  ) {
     throw rateLimited(
       `Version limit of ${PUBLISH_QUOTAS.maxVersionsPerPackage} per package reached.`,
     );
@@ -148,18 +157,11 @@ export async function verifyScannerSignature(input: {
   const currentSeconds = Math.floor((input.now ?? new Date()).getTime() / 1_000);
   if (
     !Number.isSafeInteger(epochSeconds) ||
-    Math.abs(currentSeconds - epochSeconds) >
-      (input.maxClockSkewSeconds ?? MAX_CLOCK_SKEW_SECONDS)
+    Math.abs(currentSeconds - epochSeconds) > (input.maxClockSkewSeconds ?? MAX_CLOCK_SKEW_SECONDS)
   ) {
     throw forbidden('Expired scanner signature.');
   }
-  const expected = await signature(
-    input.secret,
-    input.method,
-    input.url,
-    timestamp,
-    input.body,
-  );
+  const expected = await signature(input.secret, input.method, input.url, timestamp, input.body);
   if (!timingSafeEqual(supplied.toLowerCase(), expected.toLowerCase())) {
     throw forbidden('Invalid scanner signature.');
   }
@@ -184,11 +186,53 @@ export function assertPublishingIdentity(input: {
   const scopes = Array.isArray(input.tokenScopes)
     ? input.tokenScopes
     : typeof input.tokenScopes === 'string'
-      ? input.tokenScopes.split(',').map((scope) => scope.trim()).filter(Boolean)
+      ? input.tokenScopes
+          .split(',')
+          .map((scope) => scope.trim())
+          .filter(Boolean)
       : [];
-  if (scopes.length > 0 && !scopes.some((scope) => ['*', 'publish', 'packages:write'].includes(scope))) {
+  if (
+    scopes.length > 0 &&
+    !scopes.some((scope) => ['*', 'publish', 'packages:write'].includes(scope))
+  ) {
     throw forbidden('This token does not grant package publishing access.');
   }
+}
+
+/** Recheck durable publisher state immediately before scanner-approved promotion. */
+export function assertArtifactPromotionIdentity(input: {
+  publisherId: string;
+  packageOwnerId: string;
+  versionPublisherId: string;
+  userStatus: string;
+  role: string;
+  acceptedTermsVersion?: string | null;
+  authorizedPackageScopes?: readonly string[];
+  packageScope: string | null;
+  packageStatus: string;
+}): void {
+  if (
+    input.publisherId !== input.packageOwnerId ||
+    input.publisherId !== input.versionPublisherId
+  ) {
+    throw forbidden('The package publisher identity no longer matches its owner.');
+  }
+  if (input.userStatus !== 'active') {
+    throw forbidden('The package publisher account is not active.');
+  }
+  if (input.role !== 'publisher' && input.role !== 'admin') {
+    throw forbidden('The package publisher is no longer approved.');
+  }
+  if (input.acceptedTermsVersion !== CURRENT_TERMS_VERSION) {
+    throw forbidden('The package publisher must accept the current terms.');
+  }
+  if (input.packageStatus !== 'active') {
+    throw forbidden('The package is not active.');
+  }
+  assertPublishingIdentity({
+    authorizedPackageScopes: input.authorizedPackageScopes,
+    packageScope: input.packageScope,
+  });
 }
 
 export function assertPackageScopeExclusive(input: {
@@ -211,7 +255,10 @@ export function immutableStagingKey(reservationId: string): string {
   return `staging/${reservationId}/${suffix}.tgz`;
 }
 
-export async function readRequestBodyLimited(request: Request, maxBytes: number): Promise<Uint8Array> {
+export async function readRequestBodyLimited(
+  request: Request,
+  maxBytes: number,
+): Promise<Uint8Array> {
   const contentLength = request.headers.get('content-length');
   if (contentLength !== null) {
     const parsed = Number(contentLength);

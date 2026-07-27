@@ -87,10 +87,7 @@ export class RegistryTableStore<K extends RegistryTableName> {
     return this.client.listRows<RegistryTableMap[K]>(this.tableId, options);
   }
 
-  async first(
-    queries: readonly string[],
-    signal?: AbortSignal,
-  ): Promise<RegistryRow<K> | null> {
+  async first(queries: readonly string[], signal?: AbortSignal): Promise<RegistryRow<K> | null> {
     const result = await this.list({
       queries: [...queries, AppwriteQuery.limit(1)],
       total: false,
@@ -133,8 +130,7 @@ export class RegistryAppwriteRepository {
   readonly scanJobs: RegistryTableStore<'scan_jobs'>;
 
   constructor(options: RegistryRepositoryOptions | AppwriteRestClient) {
-    const client =
-      options instanceof AppwriteRestClient ? options : options.client;
+    const client = options instanceof AppwriteRestClient ? options : options.client;
     this.users = new RegistryTableStore(client, 'users');
     this.tokens = new RegistryTableStore(client, 'api_tokens');
     this.packages = new RegistryTableStore(client, 'packages');
@@ -150,7 +146,10 @@ export class RegistryAppwriteRepository {
     return this.users.first([AppwriteQuery.equal('clerkId', clerkId)], signal);
   }
 
-  getUserByNamespace(namespace: string, signal?: AbortSignal): Promise<AppwriteRow<UserData> | null> {
+  getUserByNamespace(
+    namespace: string,
+    signal?: AbortSignal,
+  ): Promise<AppwriteRow<UserData> | null> {
     return this.users.first([AppwriteQuery.equal('namespace', namespace)], signal);
   }
 
@@ -158,14 +157,20 @@ export class RegistryAppwriteRepository {
     return this.users.first([AppwriteQuery.equal('githubId', githubId)], signal);
   }
 
-  listUsersByStatus(status: string, options: ListRowsOptions = {}): Promise<AppwriteRowList<UserData>> {
+  listUsersByStatus(
+    status: string,
+    options: ListRowsOptions = {},
+  ): Promise<AppwriteRowList<UserData>> {
     return this.users.list({
       ...options,
       queries: [AppwriteQuery.equal('status', status), ...(options.queries ?? [])],
     });
   }
 
-  getTokenByHash(tokenHash: string, signal?: AbortSignal): Promise<AppwriteRow<ApiTokenData> | null> {
+  getTokenByHash(
+    tokenHash: string,
+    signal?: AbortSignal,
+  ): Promise<AppwriteRow<ApiTokenData> | null> {
     return this.tokens.first([AppwriteQuery.equal('tokenHash', tokenHash)], signal);
   }
 
@@ -203,11 +208,17 @@ export class RegistryAppwriteRepository {
     });
   }
 
-  revokeToken(rowId: string, revokedAt = new Date().toISOString()): Promise<AppwriteRow<ApiTokenData>> {
+  revokeToken(
+    rowId: string,
+    revokedAt = new Date().toISOString(),
+  ): Promise<AppwriteRow<ApiTokenData>> {
     return this.tokens.update(rowId, { revokedAt });
   }
 
-  touchToken(rowId: string, lastUsedAt = new Date().toISOString()): Promise<AppwriteRow<ApiTokenData>> {
+  touchToken(
+    rowId: string,
+    lastUsedAt = new Date().toISOString(),
+  ): Promise<AppwriteRow<ApiTokenData>> {
     return this.tokens.update(rowId, { lastUsedAt });
   }
 
@@ -215,27 +226,44 @@ export class RegistryAppwriteRepository {
     normalizedName: string,
     signal?: AbortSignal,
   ): Promise<AppwriteRow<PackageData> | null> {
-    return this.packages.first(
-      [AppwriteQuery.equal('normalizedName', normalizedName)],
-      signal,
-    );
+    return this.packages.first([AppwriteQuery.equal('normalizedName', normalizedName)], signal);
   }
 
-  listPackagesByOwner(ownerId: string, options: ListRowsOptions = {}): Promise<AppwriteRowList<PackageData>> {
+  listPackagesByOwner(
+    ownerId: string,
+    options: ListRowsOptions = {},
+  ): Promise<AppwriteRowList<PackageData>> {
     return this.packages.list({
       ...options,
       queries: [AppwriteQuery.equal('ownerId', ownerId), ...(options.queries ?? [])],
     });
   }
 
-  listPackagesByScope(scope: string, options: ListRowsOptions = {}): Promise<AppwriteRowList<PackageData>> {
+  listPackagesByScope(
+    scope: string,
+    options: ListRowsOptions = {},
+  ): Promise<AppwriteRowList<PackageData>> {
     return this.packages.list({
       ...options,
       queries: [AppwriteQuery.equal('scope', scope), ...(options.queries ?? [])],
     });
   }
 
-  searchPackages(term: string, options: ListRowsOptions = {}): Promise<AppwriteRowList<PackageData>> {
+  getForeignPackageOwner(
+    scope: string,
+    ownerId: string,
+    signal?: AbortSignal,
+  ): Promise<AppwriteRow<PackageData> | null> {
+    return this.packages.first(
+      [AppwriteQuery.equal('scope', scope), AppwriteQuery.notEqual('ownerId', ownerId)],
+      signal,
+    );
+  }
+
+  searchPackages(
+    term: string,
+    options: ListRowsOptions = {},
+  ): Promise<AppwriteRowList<PackageData>> {
     return this.packages.list({
       ...options,
       queries: [
@@ -254,10 +282,7 @@ export class RegistryAppwriteRepository {
     signal?: AbortSignal,
   ): Promise<AppwriteRow<VersionData> | null> {
     return this.versions.first(
-      [
-        AppwriteQuery.equal('packageId', packageId),
-        AppwriteQuery.equal('version', version),
-      ],
+      [AppwriteQuery.equal('packageId', packageId), AppwriteQuery.equal('version', version)],
       signal,
     );
   }
@@ -278,24 +303,28 @@ export class RegistryAppwriteRepository {
     });
   }
 
-  getTag(packageId: string, tag: string, signal?: AbortSignal): Promise<AppwriteRow<DistTagData> | null> {
+  getTag(
+    packageId: string,
+    tag: string,
+    signal?: AbortSignal,
+  ): Promise<AppwriteRow<DistTagData> | null> {
     return this.tags.first(
       [AppwriteQuery.equal('packageId', packageId), AppwriteQuery.equal('tag', tag)],
       signal,
     );
   }
 
-  listTags(packageId: string, options: ListRowsOptions = {}): Promise<AppwriteRowList<DistTagData>> {
+  listTags(
+    packageId: string,
+    options: ListRowsOptions = {},
+  ): Promise<AppwriteRowList<DistTagData>> {
     return this.tags.list({
       ...options,
       queries: [AppwriteQuery.equal('packageId', packageId), ...(options.queries ?? [])],
     });
   }
 
-  async setTag(
-    data: DistTagData,
-    rowId = newRowId(),
-  ): Promise<AppwriteRow<DistTagData>> {
+  async setTag(data: DistTagData, rowId = newRowId()): Promise<AppwriteRow<DistTagData>> {
     const existing = await this.getTag(data.packageId, data.tag);
     if (existing) return this.tags.update(existing.$id, { version: data.version });
     try {
@@ -324,10 +353,7 @@ export class RegistryAppwriteRepository {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<AppwriteRow<ReservationData> | null> {
-    return this.reservations.first(
-      [AppwriteQuery.equal('idempotencyKey', idempotencyKey)],
-      signal,
-    );
+    return this.reservations.first([AppwriteQuery.equal('idempotencyKey', idempotencyKey)], signal);
   }
 
   getReservationByUploadTokenHash(
@@ -354,7 +380,10 @@ export class RegistryAppwriteRepository {
     });
   }
 
-  listReportsByStatus(status: string, options: ListRowsOptions = {}): Promise<AppwriteRowList<ReportData>> {
+  listReportsByStatus(
+    status: string,
+    options: ListRowsOptions = {},
+  ): Promise<AppwriteRowList<ReportData>> {
     return this.reports.list({
       ...options,
       queries: [
@@ -365,7 +394,10 @@ export class RegistryAppwriteRepository {
     });
   }
 
-  listReportsForPackage(packageId: string, options: ListRowsOptions = {}): Promise<AppwriteRowList<ReportData>> {
+  listReportsForPackage(
+    packageId: string,
+    options: ListRowsOptions = {},
+  ): Promise<AppwriteRowList<ReportData>> {
     return this.reports.list({
       ...options,
       queries: [AppwriteQuery.equal('packageId', packageId), ...(options.queries ?? [])],
@@ -399,7 +431,10 @@ export class RegistryAppwriteRepository {
     });
   }
 
-  listAuditByActor(actorId: string, options: ListRowsOptions = {}): Promise<AppwriteRowList<AuditLogData>> {
+  listAuditByActor(
+    actorId: string,
+    options: ListRowsOptions = {},
+  ): Promise<AppwriteRowList<AuditLogData>> {
     return this.audit.list({
       ...options,
       queries: [
@@ -417,7 +452,10 @@ export class RegistryAppwriteRepository {
     return this.scanJobs.first([AppwriteQuery.equal('versionId', versionId)], signal);
   }
 
-  listScanJobsByStatus(status: string, options: ListRowsOptions = {}): Promise<AppwriteRowList<ScanJobData>> {
+  listScanJobsByStatus(
+    status: string,
+    options: ListRowsOptions = {},
+  ): Promise<AppwriteRowList<ScanJobData>> {
     return this.scanJobs.list({
       ...options,
       queries: [AppwriteQuery.equal('status', status), ...(options.queries ?? [])],

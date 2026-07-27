@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { LemonizeError } from '@lemonize/shared';
 import { authorizedPackageScopes } from '../src/lib/package-scope-grants.js';
+import { CURRENT_TERMS_VERSION } from '../src/lib/account-policy.js';
 import {
+  assertArtifactPromotionIdentity,
   assertPublishingIdentity,
   assertPackageScopeExclusive,
   assertGlobalArtifactQuota,
@@ -86,10 +88,18 @@ describe('scanner request authentication', () => {
 
 describe('publish capability boundaries', () => {
   it('stops scan promotion whenever the registry circuit breaker is active', () => {
-    expect(artifactPromotionEnabled({ registryMode: 'read_only', allowPublicPublish: true })).toBe(false);
-    expect(artifactPromotionEnabled({ registryMode: 'invite_only', allowPublicPublish: false })).toBe(false);
-    expect(artifactPromotionEnabled({ registryMode: 'invite_only', allowPublicPublish: true })).toBe(true);
-    expect(artifactPromotionEnabled({ registryMode: 'public', allowPublicPublish: true })).toBe(true);
+    expect(artifactPromotionEnabled({ registryMode: 'read_only', allowPublicPublish: true })).toBe(
+      false,
+    );
+    expect(
+      artifactPromotionEnabled({ registryMode: 'invite_only', allowPublicPublish: false }),
+    ).toBe(false);
+    expect(
+      artifactPromotionEnabled({ registryMode: 'invite_only', allowPublicPublish: true }),
+    ).toBe(true);
+    expect(artifactPromotionEnabled({ registryMode: 'public', allowPublicPublish: true })).toBe(
+      true,
+    );
   });
 
   it('requires the authenticated namespace and a publish-capable token', () => {
@@ -192,6 +202,56 @@ describe('publish capability boundaries', () => {
     ).toThrow(LemonizeError);
   });
 
+  it('rechecks the current grant immediately before scanner-approved promotion', () => {
+    const identity = { namespace: 'alice', githubId: 'github-42' };
+    const base = {
+      publisherId: 'user-1',
+      packageOwnerId: 'user-1',
+      versionPublisherId: 'user-1',
+      userStatus: 'active',
+      role: 'publisher',
+      acceptedTermsVersion: CURRENT_TERMS_VERSION,
+      packageScope: 'staging-team',
+      packageStatus: 'active',
+    };
+    const granted = authorizedPackageScopes({
+      ...identity,
+      grants: [{ scope: 'staging-team', githubId: 'github-42' }],
+    });
+    expect(() =>
+      assertArtifactPromotionIdentity({ ...base, authorizedPackageScopes: granted }),
+    ).not.toThrow();
+
+    const revoked = authorizedPackageScopes({ ...identity, grants: [] });
+    expect(() =>
+      assertArtifactPromotionIdentity({ ...base, authorizedPackageScopes: revoked }),
+    ).toThrow(LemonizeError);
+  });
+
+  it.each([
+    ['owner mismatch', { packageOwnerId: 'user-2' }],
+    ['publisher mismatch', { versionPublisherId: 'user-2' }],
+    ['suspended account', { userStatus: 'clerk_suspended' }],
+    ['consumer role', { role: 'consumer' }],
+    ['stale terms', { acceptedTermsVersion: '2026-01-01' }],
+    ['blocked package', { packageStatus: 'blocked' }],
+  ])('blocks scanner promotion for %s', (_label, override) => {
+    expect(() =>
+      assertArtifactPromotionIdentity({
+        publisherId: 'user-1',
+        packageOwnerId: 'user-1',
+        versionPublisherId: 'user-1',
+        userStatus: 'active',
+        role: 'publisher',
+        acceptedTermsVersion: CURRENT_TERMS_VERSION,
+        authorizedPackageScopes: ['alice'],
+        packageScope: 'alice',
+        packageStatus: 'active',
+        ...override,
+      }),
+    ).toThrow(LemonizeError);
+  });
+
   it('generates non-reusable staging object keys beneath one reservation', () => {
     const first = immutableStagingKey('reservation-1');
     const second = immutableStagingKey('reservation-1');
@@ -209,32 +269,40 @@ describe('publish capability boundaries', () => {
   });
 
   it('enforces bounded package, reservation, and byte quotas', () => {
-    expect(() => assertPublishQuota({
-      packageCount: PUBLISH_QUOTAS.maxPackages - 1,
-      liveReservations: PUBLISH_QUOTAS.maxLiveReservations - 1,
-      storedAndReservedBytes: PUBLISH_QUOTAS.maxStoredAndReservedBytes - 1,
-      addsPackage: true,
-      additionalBytes: 1,
-    })).not.toThrow();
-    expect(() => assertPublishQuota({
-      packageCount: PUBLISH_QUOTAS.maxPackages,
-      liveReservations: 0,
-      storedAndReservedBytes: 0,
-      addsPackage: true,
-    })).toThrow();
-    expect(() => assertPublishQuota({
-      packageCount: 1,
-      liveReservations: PUBLISH_QUOTAS.maxLiveReservations,
-      storedAndReservedBytes: 0,
-      addsPackage: false,
-    })).toThrow();
-    expect(() => assertPublishQuota({
-      packageCount: 1,
-      liveReservations: 0,
-      storedAndReservedBytes: PUBLISH_QUOTAS.maxStoredAndReservedBytes,
-      addsPackage: false,
-      additionalBytes: 1,
-    })).toThrow();
+    expect(() =>
+      assertPublishQuota({
+        packageCount: PUBLISH_QUOTAS.maxPackages - 1,
+        liveReservations: PUBLISH_QUOTAS.maxLiveReservations - 1,
+        storedAndReservedBytes: PUBLISH_QUOTAS.maxStoredAndReservedBytes - 1,
+        addsPackage: true,
+        additionalBytes: 1,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPublishQuota({
+        packageCount: PUBLISH_QUOTAS.maxPackages,
+        liveReservations: 0,
+        storedAndReservedBytes: 0,
+        addsPackage: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      assertPublishQuota({
+        packageCount: 1,
+        liveReservations: PUBLISH_QUOTAS.maxLiveReservations,
+        storedAndReservedBytes: 0,
+        addsPackage: false,
+      }),
+    ).toThrow();
+    expect(() =>
+      assertPublishQuota({
+        packageCount: 1,
+        liveReservations: 0,
+        storedAndReservedBytes: PUBLISH_QUOTAS.maxStoredAndReservedBytes,
+        addsPackage: false,
+        additionalBytes: 1,
+      }),
+    ).toThrow();
     expect(PUBLISH_QUOTAS).toMatchObject({
       maxPackages: 5,
       maxVersionsPerPackage: 20,
