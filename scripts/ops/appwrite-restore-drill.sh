@@ -263,6 +263,7 @@ cleanup() {
   set +e
   local cleanup_failed=0
   local cleanup_deferred=0
+  local reported_target_database_id=
   if [[ -n "$cleanup_deferred_reason" ]]; then
     cleanup_deferred=1
     echo "Automatic cleanup was deferred because an Appwrite operation may still be active: $cleanup_deferred_reason" >&2
@@ -276,6 +277,13 @@ cleanup() {
     fi
     if [[ "$restoration_started" == 1 ]]; then
       echo "Preserved restoration ID: ${restoration_id:-unknown}" >&2
+      if [[ -f "$scratch/restoration-reported-target-ids" ]]; then
+        while IFS= read -r reported_target_database_id; do
+          if [[ "$reported_target_database_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$ ]]; then
+            echo "Reported restoration target database ID: $reported_target_database_id" >&2
+          fi
+        done < "$scratch/restoration-reported-target-ids"
+      fi
     fi
     echo "Wait for the provider operation to reach a terminal state, then perform reviewed cleanup before retrying." >&2
   else
@@ -534,16 +542,51 @@ cleanup_deferred_reason="restoration did not reach a terminal state"
   --new-resource-name "$target_database_name" > "$scratch/restoration-created.json"
 restoration_id=$(node -e '
   const fs = require("node:fs");
-  const [path, archiveId, targetId, targetName] = process.argv.slice(1);
+  const [path, archiveId] = process.argv.slice(1);
   const restoration = JSON.parse(fs.readFileSync(path, "utf8"));
-  const services = [...(restoration.services ?? [])].sort();
-  let options;
-  try { options = JSON.parse(restoration.options); } catch { process.exit(1); }
+  const servicesMatch = Array.isArray(restoration.services) &&
+    restoration.services.length === 1 && restoration.services[0] === "tablesdb";
   if (typeof restoration.$id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$/.test(restoration.$id) ||
-      restoration.archiveId !== archiveId || JSON.stringify(services) !== JSON.stringify(["tablesdb"]) ||
-      options.newResourceId !== targetId || options.newResourceName !== targetName) process.exit(1);
+      restoration.archiveId !== archiveId || !servicesMatch) {
+    console.error("Restore initiation returned an unexpected identity");
+    process.exit(1);
+  }
   process.stdout.write(restoration.$id);
-' "$scratch/restoration-created.json" "$archive_id" "$target_database_id" "$target_database_name")
+' "$scratch/restoration-created.json" "$archive_id")
+node -e '
+  const fs = require("node:fs");
+  const [path, reportedTargetPath, restorationId, archiveId, sourceId, targetId, targetName] = process.argv.slice(1);
+  const restoration = JSON.parse(fs.readFileSync(path, "utf8"));
+  const servicesMatch = Array.isArray(restoration.services) &&
+    restoration.services.length === 1 && restoration.services[0] === "tablesdb";
+  if (restoration.$id !== restorationId || restoration.archiveId !== archiveId || !servicesMatch) {
+    console.error("Restore initiation returned an unexpected identity");
+    process.exit(1);
+  }
+  let options = restoration.options;
+  if (typeof options === "string") {
+    try { options = JSON.parse(options); } catch {
+      console.error("Restore initiation returned invalid options JSON");
+      process.exit(1);
+    }
+  }
+  const databases = options?.tablesdb?.database;
+  const reportedTargetIds = Array.isArray(databases)
+    ? [...new Set(databases.map((database) => database?.newId).filter((id) =>
+        typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$/.test(id)))]
+    : [];
+  if (reportedTargetIds.length > 0) {
+    fs.writeFileSync(reportedTargetPath, `${reportedTargetIds.join("\n")}\n`);
+  }
+  const destinationMatches = Array.isArray(databases) && databases.length === 1 &&
+    databases[0]?.oldId === sourceId && databases[0]?.newId === targetId &&
+    databases[0]?.newName === targetName;
+  if (!destinationMatches) {
+    console.error("Restore initiation returned an unexpected destination");
+    process.exit(1);
+  }
+' "$scratch/restoration-created.json" "$scratch/restoration-reported-target-ids" "$restoration_id" \
+  "$archive_id" "$source_database_id" "$target_database_id" "$target_database_name"
 
 restoration_completed=0
 for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
