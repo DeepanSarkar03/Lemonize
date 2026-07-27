@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: appwrite-backup-${{ inputs.environment }}
+  group: appwrite-${{ inputs.environment }}-mutation
   cancel-in-progress: false
 
 jobs:

@@ -20,7 +20,7 @@ permissions:
   checks: read
 
 concurrency:
-  group: appwrite-scanner-${{ inputs.environment }}
+  group: appwrite-${{ inputs.environment }}-mutation
   cancel-in-progress: false
 
 env:

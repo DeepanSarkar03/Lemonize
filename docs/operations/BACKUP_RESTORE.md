@@ -47,6 +47,8 @@ appwrite backups get-restoration --restoration-id <restoration-id>
 
 Test restoration quarterly in staging with non-production resources and synthetic data. A policy that has never produced and restored a completed archive is not a verified backup.
 
+Use the reviewer-gated `.github/workflows/appwrite-restore-drill.yml` workflow for that test. Dispatch it from `main` only after the exact commit has passed all required CI checks, and enter `RESTORE_STAGING_TO_ISOLATED_DATABASE` as the confirmation. The workflow never restores over `registry`: it creates a disabled synthetic staging database with a sentinel row, takes a one-off resource-scoped archive, restores it to a second generated disabled database, verifies the schema and sentinel, confirms the runtime database did not change, and deletes both temporary databases plus the one-off archive. All Appwrite-mutating staging workflows share one concurrency lock so schema, scanner, backup, deployment, and restore operations cannot overlap.
+
 ## Scope boundary
 
 Appwrite archives do not cover Cloudflare KV, R2, Cache API, or Durable Objects. Published versions retain their antivirus-accepted Appwrite Storage copy, and Appwrite backups cover that copy, but preserve immutable R2 artifacts separately before destructive maintenance, including object keys, sizes, custom digest metadata, and a sample/full digest verification appropriate to the incident. Treat KV revocation/metadata cache, npm edge cache, expired device approvals, and fixed-window rate/admission ledgers as reconstructable ephemeral state. Do not claim the Appwrite policy as direct recovery coverage for Cloudflare bindings.
