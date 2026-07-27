@@ -16,13 +16,17 @@ source_name='Lemonize restore source 12345-1'
 target_name='Lemonize restore target 12345-1'
 mkdir -p "$FAKE_STATE"
 
-if [[ "${1:-}" == client ]]; then
-  echo client >> "$FAKE_STATE/commands.log"
-  exit 0
+if [[ -n "${APPWRITE_BACKUP_API_KEY:-}" ||
+      -n "${APPWRITE_DEPLOY_API_KEY:-}" ||
+      -n "${APPWRITE_RESTORE_DATA_API_KEY:-}" ||
+      -n "${APPWRITE_RUNTIME_API_KEY:-}" ||
+      -n "${APPWRITE_API_KEY:-}" ||
+      -n "${backup_api_key:-}" ||
+      -n "${deploy_api_key:-}" ||
+      -n "${restore_data_api_key:-}" ]]; then
+  echo 'Appwrite API keys leaked into an Appwrite CLI subprocess' >&2
+  exit 1
 fi
-if [[ "${1:-}" == --json ]]; then shift; fi
-printf '%q ' "$@" >> "$FAKE_STATE/commands.log"
-printf '\n' >> "$FAKE_STATE/commands.log"
 
 value_of() {
   local needle=$1
@@ -36,6 +40,22 @@ value_of() {
   done
   return 1
 }
+
+require_active_key() {
+  local expected=$1
+  [[ -f "$FAKE_STATE/active-key" ]]
+  [[ "$(cat "$FAKE_STATE/active-key")" == "$expected" ]]
+}
+
+if [[ "${1:-}" == client ]]; then
+  key=$(value_of --key "$@")
+  printf '%s' "$key" > "$FAKE_STATE/active-key"
+  echo client >> "$FAKE_STATE/commands.log"
+  exit 0
+fi
+if [[ "${1:-}" == --json ]]; then shift; fi
+printf '%q ' "$@" >> "$FAKE_STATE/commands.log"
+printf '\n' >> "$FAKE_STATE/commands.log"
 
 fail_read_once() {
   local operation=$1
@@ -53,6 +73,7 @@ shift 2 || true
 
 case "$service:$operation" in
   tables-db:list)
+    require_active_key test-deploy-key
     search=$(value_of --search "$@" || true)
     if [[ "$search" == "$source_id" && "${FAKE_DATABASE_STATE_VALID_THEN_FAIL:-0}" == 1 ]]; then
       printf '{"total":0,"databases":[]}'
@@ -92,6 +113,7 @@ case "$service:$operation" in
     esac
     ;;
   tables-db:get)
+    require_active_key test-deploy-key
     id=$(value_of --database-id "$@")
     case "$id" in
       registry)
@@ -112,12 +134,14 @@ case "$service:$operation" in
     esac
     ;;
   tables-db:create)
+    require_active_key test-deploy-key
     id=$(value_of --database-id "$@")
     [[ "$id" == "$source_id" ]]
     printf 'false' > "$FAKE_STATE/source"
     printf '{"$id":"%s","name":"%s","enabled":false,"status":"ready"}' "$source_id" "$source_name"
     ;;
   tables-db:update)
+    require_active_key test-deploy-key
     id=$(value_of --database-id "$@")
     [[ "$id" == "$source_id" || "$id" == "$target_id" ]]
     if [[ "$id" == "$source_id" ]]; then
@@ -128,54 +152,86 @@ case "$service:$operation" in
     printf '{"$id":"%s","enabled":false,"status":"ready"}' "$id"
     ;;
   tables-db:delete)
+    require_active_key test-deploy-key
     id=$(value_of --database-id "$@")
     case "$id" in
-      "$source_id") rm -f "$FAKE_STATE/source" ;;
-      "$target_id") rm -f "$FAKE_STATE/target" ;;
+      "$source_id") rm -f "$FAKE_STATE/source" "$FAKE_STATE/source-row" ;;
+      "$target_id") rm -f "$FAKE_STATE/target" "$FAKE_STATE/target-row" ;;
       *) echo "refusing unexpected delete $id" >&2; exit 1 ;;
     esac
     printf '{}'
     ;;
   tables-db:create-table)
+    require_active_key test-deploy-key
     printf '{"$id":"fixture","name":"Restore fixture","enabled":false,"rowSecurity":false}'
     ;;
   tables-db:create-varchar-column)
+    require_active_key test-deploy-key
     printf '{"key":"value","type":"varchar","required":true,"status":"processing"}'
     ;;
   tables-db:get-column)
+    require_active_key test-deploy-key
     if fail_read_once get-column; then exit 1; fi
     printf '{"key":"value","type":"varchar","required":true,"status":"%s"}' \
       "${FAKE_COLUMN_STATUS:-available}"
     ;;
   tables-db:create-row)
+    require_active_key test-restore-data-key
+    database_id=$(value_of --database-id "$@")
+    table_id=$(value_of --table-id "$@")
+    row_id=$(value_of --row-id "$@")
+    data=$(value_of --data "$@")
+    [[ "$database_id" == "$source_id" ]]
+    [[ "$table_id" == fixture && "$row_id" == sentinel ]]
+    [[ "$data" == '{"value":"restore-sentinel-12345-1"}' ]]
+    [[ -f "$FAKE_STATE/source" ]]
+    printf '%s' 'restore-sentinel-12345-1' > "$FAKE_STATE/source-row"
     printf '{"$id":"sentinel","value":"restore-sentinel-12345-1"}'
     ;;
   tables-db:get-row)
-    id=$(value_of --database-id "$@")
-    if [[ "$id" == "$target_id" && "${FAKE_BAD_TARGET_ROW:-0}" == 1 ]]; then
+    require_active_key test-restore-data-key
+    database_id=$(value_of --database-id "$@")
+    table_id=$(value_of --table-id "$@")
+    row_id=$(value_of --row-id "$@")
+    [[ "$table_id" == fixture && "$row_id" == sentinel ]]
+    case "$database_id" in
+      "$source_id") row_file="$FAKE_STATE/source-row" ;;
+      "$target_id") row_file="$FAKE_STATE/target-row" ;;
+      *) exit 1 ;;
+    esac
+    [[ -f "$row_file" ]]
+    value=$(cat "$row_file")
+    if [[ "$database_id" == "$target_id" && "${FAKE_BAD_TARGET_ROW:-0}" == 1 ]]; then
       printf '{"$id":"sentinel","value":"wrong"}'
     else
-      printf '{"$id":"sentinel","value":"restore-sentinel-12345-1"}'
+      printf '{"$id":"sentinel","value":"%s"}' "$value"
     fi
     ;;
   tables-db:list-tables)
+    require_active_key test-deploy-key
     printf '{"total":1,"tables":[{"$id":"fixture","name":"Restore fixture","enabled":false,"rowSecurity":false}]}'
     ;;
   backups:create-archive)
+    require_active_key test-backup-key
+    [[ -f "$FAKE_STATE/source-row" ]]
     touch "$FAKE_STATE/archive"
+    cp "$FAKE_STATE/source-row" "$FAKE_STATE/archive-row"
     printf '{"$id":"archive-1","resourceId":"%s","policyId":null,"services":["tablesdb"],"status":"pending"}' "$source_id"
     ;;
   backups:get-archive)
-    [[ -f "$FAKE_STATE/archive" ]] || exit 1
+    require_active_key test-backup-key
+    [[ -f "$FAKE_STATE/archive" && -f "$FAKE_STATE/archive-row" ]] || exit 1
     if fail_read_once get-archive; then exit 1; fi
     printf '{"$id":"archive-1","resourceId":"%s","policyId":null,"services":["tablesdb"],"status":"%s","size":128}' \
       "$source_id" "${FAKE_ARCHIVE_STATUS:-completed}"
     ;;
   backups:delete-archive)
-    rm -f "$FAKE_STATE/archive"
+    require_active_key test-backup-key
+    rm -f "$FAKE_STATE/archive" "$FAKE_STATE/archive-row"
     printf '{}'
     ;;
   backups:list-archives)
+    require_active_key test-backup-key
     if [[ -f "$FAKE_STATE/archive" ]]; then
       printf '{"total":1,"archives":[{"$id":"archive-1"}]}'
     else
@@ -183,10 +239,14 @@ case "$service:$operation" in
     fi
     ;;
   backups:create-restoration)
+    require_active_key test-backup-key
+    [[ -f "$FAKE_STATE/archive-row" ]]
     printf 'true' > "$FAKE_STATE/target"
+    cp "$FAKE_STATE/archive-row" "$FAKE_STATE/target-row"
     printf '{"$id":"restoration-1","archiveId":"archive-1","services":["tablesdb"],"status":"pending","options":"{\\"newResourceId\\":\\"%s\\",\\"newResourceName\\":\\"%s\\"}"}' "$target_id" "$target_name"
     ;;
   backups:get-restoration)
+    require_active_key test-backup-key
     if fail_read_once get-restoration; then exit 1; fi
     printf '{"$id":"restoration-1","archiveId":"archive-1","services":["tablesdb"],"status":"%s"}' \
       "${FAKE_RESTORATION_STATUS:-completed}"
@@ -208,6 +268,9 @@ run_drill() {
     APPWRITE_PROJECT_ID=lemonize-staging-2026 \
     APPWRITE_BACKUP_API_KEY=test-backup-key \
     APPWRITE_DEPLOY_API_KEY=test-deploy-key \
+    APPWRITE_RESTORE_DATA_API_KEY=test-restore-data-key \
+    APPWRITE_RUNTIME_API_KEY=must-not-reach-subprocesses \
+    APPWRITE_API_KEY=must-not-reach-subprocesses \
     APPWRITE_DATABASE_ID=registry \
     REGISTRY_MODE=read_only \
     ALLOW_PUBLIC_PUBLISH=false \
@@ -262,6 +325,25 @@ test -e "$transient_state/transient-get-column"
 test -e "$transient_state/transient-get-archive"
 test -e "$transient_state/transient-get-restoration"
 
+for duplicate_case in \
+  'backup-deploy|APPWRITE_BACKUP_API_KEY=test-deploy-key' \
+  'backup-restore|APPWRITE_BACKUP_API_KEY=test-restore-data-key' \
+  'deploy-restore|APPWRITE_RESTORE_DATA_API_KEY=test-deploy-key'; do
+  IFS='|' read -r duplicate_name duplicate_assignment <<<"$duplicate_case"
+  duplicate_key_state="$tmp/duplicate-$duplicate_name"
+  duplicate_output=
+  duplicate_status=0
+  if duplicate_output=$(run_drill "$duplicate_key_state" "$duplicate_assignment" 2>&1); then
+    echo "restore drill accepted duplicate Appwrite API keys: $duplicate_name" >&2
+    exit 1
+  else
+    duplicate_status=$?
+  fi
+  test "$duplicate_status" -eq 64
+  grep -Fq 'requires three distinct least-privilege Appwrite API keys' <<<"$duplicate_output"
+  test ! -e "$duplicate_key_state/commands.log"
+done
+
 bad_confirmation_state="$tmp/bad-confirmation"
 mkdir -p "$bad_confirmation_state"
 if env \
@@ -269,6 +351,7 @@ if env \
   APPWRITE_PROJECT_ID=lemonize-staging-2026 \
   APPWRITE_BACKUP_API_KEY=test-backup-key \
   APPWRITE_DEPLOY_API_KEY=test-deploy-key \
+  APPWRITE_RESTORE_DATA_API_KEY=test-restore-data-key \
   APPWRITE_DATABASE_ID=registry \
   REGISTRY_MODE=read_only \
   ALLOW_PUBLIC_PUBLISH=false \
@@ -289,6 +372,7 @@ if env \
   APPWRITE_PROJECT_ID=lemonize-prod-2026 \
   APPWRITE_BACKUP_API_KEY=test-backup-key \
   APPWRITE_DEPLOY_API_KEY=test-deploy-key \
+  APPWRITE_RESTORE_DATA_API_KEY=test-restore-data-key \
   APPWRITE_DATABASE_ID=registry \
   REGISTRY_MODE=read_only \
   ALLOW_PUBLIC_PUBLISH=false \

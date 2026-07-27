@@ -5,8 +5,20 @@ umask 077
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 bash "$script_dir/require-env.sh" \
   APPWRITE_ENDPOINT APPWRITE_PROJECT_ID APPWRITE_BACKUP_API_KEY \
-  APPWRITE_DEPLOY_API_KEY APPWRITE_DATABASE_ID REGISTRY_MODE \
+  APPWRITE_DEPLOY_API_KEY APPWRITE_RESTORE_DATA_API_KEY APPWRITE_DATABASE_ID REGISTRY_MODE \
   ALLOW_PUBLIC_PUBLISH RESTORE_DRILL_CONFIRMATION RESTORE_DRILL_RUN_ID
+
+backup_api_key=$APPWRITE_BACKUP_API_KEY
+deploy_api_key=$APPWRITE_DEPLOY_API_KEY
+restore_data_api_key=$APPWRITE_RESTORE_DATA_API_KEY
+unset APPWRITE_BACKUP_API_KEY APPWRITE_DEPLOY_API_KEY APPWRITE_RESTORE_DATA_API_KEY \
+  APPWRITE_RUNTIME_API_KEY APPWRITE_API_KEY
+if [[ "$backup_api_key" == "$deploy_api_key" ||
+      "$backup_api_key" == "$restore_data_api_key" ||
+      "$deploy_api_key" == "$restore_data_api_key" ]]; then
+  echo "The restore drill requires three distinct least-privilege Appwrite API keys" >&2
+  exit 64
+fi
 
 if [[ "$RESTORE_DRILL_CONFIRMATION" != RESTORE_STAGING_TO_ISOLATED_DATABASE ]]; then
   echo "The staging restore drill confirmation phrase is invalid" >&2
@@ -159,7 +171,7 @@ delete_owned_database() {
     echo "Refusing to clean an untrusted restore drill database ID" >&2
     return 1
   fi
-  configure_client "$APPWRITE_DEPLOY_API_KEY" || return 1
+  configure_client "$deploy_api_key" || return 1
   local state
   state=$(database_state "$database_id" "$expected_name") || return 1
   case "$state" in
@@ -186,7 +198,7 @@ delete_owned_database() {
 
 delete_owned_archive() {
   if [[ "$archive_creation_started" == 1 && -z "$archive_id" ]]; then
-    configure_client "$APPWRITE_BACKUP_API_KEY" || return 1
+    configure_client "$backup_api_key" || return 1
     local discovery_file="$scratch/archive-discovery.json"
     read_json_bounded "$discovery_file" backups list-archives --sort-desc '$createdAt' --limit 100 || return 1
     archive_id=$(node -e '
@@ -216,7 +228,7 @@ delete_owned_archive() {
     echo "Refusing to clean an invalid restore drill archive ID" >&2
     return 1
   fi
-  configure_client "$APPWRITE_BACKUP_API_KEY" || return 1
+  configure_client "$backup_api_key" || return 1
   local archive_file="$scratch/archive-cleanup.json"
   read_json_bounded "$archive_file" backups get-archive --archive-id "$archive_id" || return 1
   node -e '
@@ -316,7 +328,7 @@ wait_for_database_ready() {
   return 1
 }
 
-configure_client "$APPWRITE_DEPLOY_API_KEY"
+configure_client "$deploy_api_key"
 runtime_before="$scratch/runtime-before.json"
 read_json_required "$runtime_before" tables-db get --database-id "$APPWRITE_DATABASE_ID"
 node -e '
@@ -351,7 +363,7 @@ for pair in "$source_database_id|$source_database_name" "$target_database_id|$ta
   fi
 done
 
-configure_client "$APPWRITE_BACKUP_API_KEY"
+configure_client "$backup_api_key"
 read_json_required "$scratch/archives-preflight.json" backups list-archives --sort-desc '$createdAt' --limit 100
 node -e '
   const fs = require("node:fs");
@@ -364,7 +376,7 @@ node -e '
     process.exit(1);
   }
 ' "$scratch/archives-preflight.json" "$source_database_id"
-configure_client "$APPWRITE_DEPLOY_API_KEY"
+configure_client "$deploy_api_key"
 
 source_owned=1
 cleanup_deferred_reason="source database creation did not reach ready"
@@ -422,6 +434,7 @@ fi
 cleanup_deferred_reason=
 
 fixture_data=$(node -e 'process.stdout.write(JSON.stringify({ value: process.argv[1] }))' "$fixture_value")
+configure_client "$restore_data_api_key"
 "$APPWRITE_BIN" --json tables-db create-row \
   --database-id "$source_database_id" \
   --table-id "$fixture_table_id" \
@@ -431,6 +444,7 @@ fixture_data=$(node -e 'process.stdout.write(JSON.stringify({ value: process.arg
 verify_fixture_row() {
   local database_id=$1
   local output=$2
+  configure_client "$restore_data_api_key"
   read_json_required "$output" tables-db get-row \
     --database-id "$database_id" --table-id "$fixture_table_id" --row-id "$fixture_row_id"
   node -e '
@@ -445,7 +459,7 @@ verify_fixture_row() {
 }
 verify_fixture_row "$source_database_id" "$scratch/source-row-before.json"
 
-configure_client "$APPWRITE_BACKUP_API_KEY"
+configure_client "$backup_api_key"
 archive_creation_started=1
 cleanup_deferred_reason="archive creation did not reach a terminal state"
 "$APPWRITE_BIN" --json backups create-archive \
@@ -507,10 +521,9 @@ if [[ "$archive_completed" != 1 ]]; then
   exit 1
 fi
 
-configure_client "$APPWRITE_DEPLOY_API_KEY"
 verify_fixture_row "$source_database_id" "$scratch/source-row-after-archive.json"
 
-configure_client "$APPWRITE_BACKUP_API_KEY"
+configure_client "$backup_api_key"
 target_owned=1
 restoration_started=1
 cleanup_deferred_reason="restoration did not reach a terminal state"
@@ -573,7 +586,7 @@ if [[ "$restoration_completed" != 1 ]]; then
   exit 1
 fi
 
-configure_client "$APPWRITE_DEPLOY_API_KEY"
+configure_client "$deploy_api_key"
 wait_for_database_ready "$target_database_id" "$target_database_name" "$scratch/target-ready.json"
 cleanup_deferred_reason=
 "$APPWRITE_BIN" --json tables-db update \
@@ -603,6 +616,7 @@ node -e '
 verify_fixture_row "$target_database_id" "$scratch/target-row.json"
 verify_fixture_row "$source_database_id" "$scratch/source-row-final.json"
 
+configure_client "$deploy_api_key"
 runtime_after="$scratch/runtime-after.json"
 read_json_required "$runtime_after" tables-db get --database-id "$APPWRITE_DATABASE_ID"
 node -e '

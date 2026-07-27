@@ -29,7 +29,7 @@ No D1 resource belongs in this matrix. D1 is a frozen migration source only.
 
 ## Protected configuration
 
-Configure the following independently on the staging and production GitHub environments. A missing required value is a hard failure; `ADMIN_CLERK_IDS` may be intentionally empty.
+Configure the following independently on the staging and production GitHub environments unless a value is explicitly marked staging-only. A missing required value is a hard failure; `ADMIN_CLERK_IDS` may be intentionally empty.
 
 | Kind     | Name                                                                     | Purpose                                                                                              |
 | -------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
@@ -38,6 +38,7 @@ Configure the following independently on the staging and production GitHub envir
 | Secret   | `VERCEL_TOKEN`                                                           | Token scoped to the matching Vercel project/team                                                     |
 | Secret   | `APPWRITE_DEPLOY_API_KEY`                                                | CI-only TablesDB/schema, bucket, and function administration                                         |
 | Secret   | `APPWRITE_RUNTIME_API_KEY`                                               | Worker-only rows, scanner execution, rejected/expired file cleanup, and expired device-token cleanup |
+| Secret   | `APPWRITE_RESTORE_DATA_API_KEY`                                          | Staging restore-drill CI only; row read/write for generated synthetic resources                      |
 | Secret   | `APPWRITE_BACKUP_API_KEY`                                                | Backup policy, archive, and restoration operations only                                              |
 | Secret   | `CLERK_SECRET_KEY`                                                       | Worker-only active-user/profile lookup in the matching Clerk instance                                |
 | Secret   | `SCANNER_SHARED_SECRET`                                                  | Worker/scanner request HMAC and domain-separated stateless device-code signing                       |

@@ -93,12 +93,18 @@ jobs:
           APPWRITE_DATABASE_ID: ${{ vars.APPWRITE_DATABASE_ID }}
           APPWRITE_BACKUP_API_KEY: ${{ secrets.APPWRITE_BACKUP_API_KEY }}
           APPWRITE_DEPLOY_API_KEY: ${{ secrets.APPWRITE_DEPLOY_API_KEY }}
+          APPWRITE_RESTORE_DATA_API_KEY: ${{ secrets.APPWRITE_RESTORE_DATA_API_KEY }}
           REGISTRY_MODE: ${{ vars.REGISTRY_MODE }}
           ALLOW_PUBLIC_PUBLISH: ${{ vars.ALLOW_PUBLIC_PUBLISH }}
           RESTORE_DRILL_CONFIRMATION: ${{ inputs.confirmation }}
           RESTORE_DRILL_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           APPWRITE_CLI_HOME: ${{ runner.temp }}/appwrite-cli
         run: bash scripts/ops/appwrite-restore-drill.sh
+      - name: Remove isolated Appwrite CLI state
+        if: always()
+        run: |
+          test -n "$RUNNER_TEMP"
+          rm -rf -- "$RUNNER_TEMP/appwrite-cli"
       - name: Confirm staging runtime remained healthy and read-only
         env:
           REGISTRY_BASE_URL: ${{ vars.REGISTRY_BASE_URL }}
