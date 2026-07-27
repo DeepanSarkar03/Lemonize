@@ -142,6 +142,8 @@ jobs:
         run: pnpm --filter @lemonize/npm-proxy-worker test
       - name: Test Appwrite backup health verification
         run: bash scripts/ops/appwrite-backup.test.sh
+      - name: Test Appwrite restore drill safeguards
+        run: bash scripts/ops/appwrite-restore-drill.test.sh
       - name: Test additive Appwrite schema reconciliation
         run: node --test scripts/ops/reconcile-appwrite-schema.test.mjs
       - name: Test package-scope grant deployment validation

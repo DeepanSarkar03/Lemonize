@@ -25,7 +25,7 @@ permissions:
   checks: read
 
 concurrency:
-  group: deploy-${{ inputs.environment }}
+  group: appwrite-${{ inputs.environment }}-mutation
   cancel-in-progress: false
 
 env:
@@ -101,11 +101,11 @@ jobs:
             'Artifact integrity, extraction, and CLI security tests'
           )
           for check_name in "${required_checks[@]}"; do
-            successful=$(gh api \
+            latest_conclusion=$(gh api \
               -H 'X-GitHub-Api-Version: 2022-11-28' \
-              "repos/${GITHUB_REPOSITORY}/commits/${REQUESTED_SHA}/check-runs?per_page=100" \
-              --jq "[.check_runs[] | select(.name == \"$check_name\" and .conclusion == \"success\")] | length")
-            test "$successful" -ge 1 || {
+              "repos/${GITHUB_REPOSITORY}/commits/${REQUESTED_SHA}/check-runs?per_page=100&filter=latest" \
+              --jq "[.check_runs[] | select(.name == \"$check_name\")] | sort_by(.id) | last | .conclusion // \"\"")
+            test "$latest_conclusion" = success || {
               echo "Required CI check has not passed for $REQUESTED_SHA: $check_name" >&2
               exit 1
             }
