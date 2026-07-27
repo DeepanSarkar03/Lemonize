@@ -60,10 +60,16 @@ done
 APPWRITE_BIN=${APPWRITE_BIN:-appwrite}
 RESTORE_DRILL_POLL_SECONDS=${RESTORE_DRILL_POLL_SECONDS:-5}
 RESTORE_DRILL_MAX_POLLS=${RESTORE_DRILL_MAX_POLLS:-90}
+RESTORE_DRILL_READ_TIMEOUT_SECONDS=${RESTORE_DRILL_READ_TIMEOUT_SECONDS:-10}
 if [[ ! "$RESTORE_DRILL_POLL_SECONDS" =~ ^[0-9]+$ ||
-      ! "$RESTORE_DRILL_MAX_POLLS" =~ ^[1-9][0-9]*$ ]]; then
+      ! "$RESTORE_DRILL_MAX_POLLS" =~ ^[1-9][0-9]*$ ||
+      ! "$RESTORE_DRILL_READ_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   echo "Restore drill polling configuration is invalid" >&2
   exit 64
+fi
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "The restore drill requires GNU timeout to bound Appwrite reads" >&2
+  exit 69
 fi
 
 if [[ -z "${APPWRITE_CLI_HOME:-}" ]]; then
@@ -81,6 +87,10 @@ target_owned=0
 archive_owned=0
 archive_creation_started=0
 archive_id=
+restoration_started=0
+restoration_id=
+cleanup_deferred_reason=
+last_read_error=
 drill_verified=0
 cleanup_running=0
 
@@ -92,11 +102,42 @@ configure_client() {
     --key "$key" >/dev/null
 }
 
+read_json_bounded() {
+  local output=$1
+  shift
+  local exit_code=0
+  timeout --signal=TERM --kill-after=5 "${RESTORE_DRILL_READ_TIMEOUT_SECONDS}s" \
+    "$APPWRITE_BIN" --json "$@" > "$output" 2>/dev/null || exit_code=$?
+  if [[ "$exit_code" == 0 ]]; then
+    last_read_error=
+    return 0
+  fi
+  case "$exit_code" in
+    124|137|143)
+      last_read_error="Appwrite read timed out after ${RESTORE_DRILL_READ_TIMEOUT_SECONDS}s"
+      ;;
+    *)
+      last_read_error="Appwrite read failed with exit code $exit_code"
+      ;;
+  esac
+  return 1
+}
+
+read_json_required() {
+  local output=$1
+  shift
+  local request="${1:-unknown} ${2:-read}"
+  if ! read_json_bounded "$output" "$@"; then
+    echo "Required Appwrite $request request failed: $last_read_error" >&2
+    return 1
+  fi
+}
+
 database_state() {
   local database_id=$1
   local expected_name=$2
   local output="$scratch/database-list-$database_id.json"
-  "$APPWRITE_BIN" --json tables-db list --search "$database_id" --limit 100 > "$output"
+  read_json_bounded "$output" tables-db list --search "$database_id" --limit 100 || return 1
   node -e '
     const fs = require("node:fs");
     const [path, id, name] = process.argv.slice(1);
@@ -147,7 +188,7 @@ delete_owned_archive() {
   if [[ "$archive_creation_started" == 1 && -z "$archive_id" ]]; then
     configure_client "$APPWRITE_BACKUP_API_KEY" || return 1
     local discovery_file="$scratch/archive-discovery.json"
-    "$APPWRITE_BIN" --json backups list-archives --sort-desc '$createdAt' --limit 100 > "$discovery_file" || return 1
+    read_json_bounded "$discovery_file" backups list-archives --sort-desc '$createdAt' --limit 100 || return 1
     archive_id=$(node -e '
       const fs = require("node:fs");
       const [path, resourceId] = process.argv.slice(1);
@@ -177,7 +218,7 @@ delete_owned_archive() {
   fi
   configure_client "$APPWRITE_BACKUP_API_KEY" || return 1
   local archive_file="$scratch/archive-cleanup.json"
-  "$APPWRITE_BIN" --json backups get-archive --archive-id "$archive_id" > "$archive_file" || return 1
+  read_json_bounded "$archive_file" backups get-archive --archive-id "$archive_id" || return 1
   node -e '
     const fs = require("node:fs");
     const [path, id, resourceId] = process.argv.slice(1);
@@ -191,7 +232,7 @@ delete_owned_archive() {
   ' "$archive_file" "$archive_id" "$source_database_id" || return 1
   "$APPWRITE_BIN" --json backups delete-archive --archive-id "$archive_id" > /dev/null || return 1
   local archives_file="$scratch/archives-after-cleanup.json"
-  "$APPWRITE_BIN" --json backups list-archives --sort-desc '$createdAt' --limit 100 > "$archives_file" || return 1
+  read_json_bounded "$archives_file" backups list-archives --sort-desc '$createdAt' --limit 100 || return 1
   node -e '
     const fs = require("node:fs");
     const [path, id] = process.argv.slice(1);
@@ -209,12 +250,30 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   local cleanup_failed=0
-  delete_owned_database "$target_database_id" "$target_database_name" "$target_owned" || cleanup_failed=1
-  delete_owned_database "$source_database_id" "$source_database_name" "$source_owned" || cleanup_failed=1
-  delete_owned_archive || cleanup_failed=1
+  local cleanup_deferred=0
+  if [[ -n "$cleanup_deferred_reason" ]]; then
+    cleanup_deferred=1
+    echo "Automatic cleanup was deferred because an Appwrite operation may still be active: $cleanup_deferred_reason" >&2
+    echo "Preserved source database ID: $source_database_id" >&2
+    if [[ "$target_owned" == 1 ]]; then
+      echo "Preserved target database ID: $target_database_id" >&2
+    fi
+    if [[ "$archive_creation_started" == 1 ]]; then
+      echo "Preserved archive ID: ${archive_id:-unknown}" >&2
+      echo "Archive lookup source database ID: $source_database_id" >&2
+    fi
+    if [[ "$restoration_started" == 1 ]]; then
+      echo "Preserved restoration ID: ${restoration_id:-unknown}" >&2
+    fi
+    echo "Wait for the provider operation to reach a terminal state, then perform reviewed cleanup before retrying." >&2
+  else
+    delete_owned_database "$target_database_id" "$target_database_name" "$target_owned" || cleanup_failed=1
+    delete_owned_database "$source_database_id" "$source_database_name" "$source_owned" || cleanup_failed=1
+    delete_owned_archive || cleanup_failed=1
+  fi
   rm -rf -- "$scratch"
   if [[ "$remove_cli_home" == 1 ]]; then rm -rf -- "$APPWRITE_CLI_HOME"; fi
-  if [[ "$primary_status" -ne 0 || "$cleanup_failed" -ne 0 ]]; then
+  if [[ "$primary_status" -ne 0 || "$cleanup_failed" -ne 0 || "$cleanup_deferred" -ne 0 ]]; then
     if [[ "$cleanup_failed" -ne 0 ]]; then
       echo "Restore drill cleanup failed; inspect the exact generated resource IDs before retrying" >&2
     fi
@@ -233,7 +292,7 @@ wait_for_database_ready() {
   local expected_name=$2
   local output=$3
   for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
-    if "$APPWRITE_BIN" --json tables-db get --database-id "$database_id" > "$output" 2>/dev/null; then
+    if read_json_bounded "$output" tables-db get --database-id "$database_id"; then
       local state
       state=$(node -e '
         const fs = require("node:fs");
@@ -253,13 +312,13 @@ wait_for_database_ready() {
     fi
     sleep "$RESTORE_DRILL_POLL_SECONDS"
   done
-  echo "Timed out waiting for database $database_id" >&2
+  echo "Timed out waiting for database $database_id; ${last_read_error:-no terminal response was observed}" >&2
   return 1
 }
 
 configure_client "$APPWRITE_DEPLOY_API_KEY"
 runtime_before="$scratch/runtime-before.json"
-"$APPWRITE_BIN" --json tables-db get --database-id "$APPWRITE_DATABASE_ID" > "$runtime_before"
+read_json_required "$runtime_before" tables-db get --database-id "$APPWRITE_DATABASE_ID"
 node -e '
   const fs = require("node:fs");
   const database = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -269,7 +328,7 @@ node -e '
   }
 ' "$runtime_before"
 
-"$APPWRITE_BIN" --json tables-db list --search restore- --limit 100 > "$scratch/databases-orphan-check.json"
+read_json_required "$scratch/databases-orphan-check.json" tables-db list --search restore- --limit 100
 node -e '
   const fs = require("node:fs");
   const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -293,7 +352,7 @@ for pair in "$source_database_id|$source_database_name" "$target_database_id|$ta
 done
 
 configure_client "$APPWRITE_BACKUP_API_KEY"
-"$APPWRITE_BIN" --json backups list-archives --sort-desc '$createdAt' --limit 100 > "$scratch/archives-preflight.json"
+read_json_required "$scratch/archives-preflight.json" backups list-archives --sort-desc '$createdAt' --limit 100
 node -e '
   const fs = require("node:fs");
   const [path, resourceId] = process.argv.slice(1);
@@ -308,11 +367,13 @@ node -e '
 configure_client "$APPWRITE_DEPLOY_API_KEY"
 
 source_owned=1
+cleanup_deferred_reason="source database creation did not reach ready"
 "$APPWRITE_BIN" --json tables-db create \
   --database-id "$source_database_id" \
   --name "$source_database_name" \
   --enabled false > "$scratch/source-created.json"
 wait_for_database_ready "$source_database_id" "$source_database_name" "$scratch/source-ready.json"
+cleanup_deferred_reason=
 
 "$APPWRITE_BIN" --json tables-db create-table \
   --database-id "$source_database_id" \
@@ -320,6 +381,7 @@ wait_for_database_ready "$source_database_id" "$source_database_name" "$scratch/
   --name "Restore fixture" \
   --row-security false \
   --enabled false > "$scratch/table-created.json"
+cleanup_deferred_reason="restore fixture column creation did not reach a terminal state"
 "$APPWRITE_BIN" --json tables-db create-varchar-column \
   --database-id "$source_database_id" \
   --table-id "$fixture_table_id" \
@@ -331,10 +393,11 @@ wait_for_database_ready "$source_database_id" "$source_database_name" "$scratch/
 
 column_available=0
 for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
-  "$APPWRITE_BIN" --json tables-db get-column \
-    --database-id "$source_database_id" \
-    --table-id "$fixture_table_id" \
-    --key value > "$scratch/column.json"
+  if ! read_json_bounded "$scratch/column.json" tables-db get-column \
+    --database-id "$source_database_id" --table-id "$fixture_table_id" --key value; then
+    sleep "$RESTORE_DRILL_POLL_SECONDS"
+    continue
+  fi
   column_state=$(node -e '
     const fs = require("node:fs");
     const column = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -353,9 +416,10 @@ for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
   sleep "$RESTORE_DRILL_POLL_SECONDS"
 done
 if [[ "$column_available" != 1 ]]; then
-  echo "Timed out waiting for the restore fixture column" >&2
+  echo "Timed out waiting for the restore fixture column; ${last_read_error:-no terminal response was observed}" >&2
   exit 1
 fi
+cleanup_deferred_reason=
 
 fixture_data=$(node -e 'process.stdout.write(JSON.stringify({ value: process.argv[1] }))' "$fixture_value")
 "$APPWRITE_BIN" --json tables-db create-row \
@@ -367,10 +431,8 @@ fixture_data=$(node -e 'process.stdout.write(JSON.stringify({ value: process.arg
 verify_fixture_row() {
   local database_id=$1
   local output=$2
-  "$APPWRITE_BIN" --json tables-db get-row \
-    --database-id "$database_id" \
-    --table-id "$fixture_table_id" \
-    --row-id "$fixture_row_id" > "$output"
+  read_json_required "$output" tables-db get-row \
+    --database-id "$database_id" --table-id "$fixture_table_id" --row-id "$fixture_row_id"
   node -e '
     const fs = require("node:fs");
     const [path, rowId, value] = process.argv.slice(1);
@@ -385,6 +447,7 @@ verify_fixture_row "$source_database_id" "$scratch/source-row-before.json"
 
 configure_client "$APPWRITE_BACKUP_API_KEY"
 archive_creation_started=1
+cleanup_deferred_reason="archive creation did not reach a terminal state"
 "$APPWRITE_BIN" --json backups create-archive \
   --services tablesdb \
   --resource-id "$source_database_id" > "$scratch/archive-created.json"
@@ -407,7 +470,10 @@ node -e '
 
 archive_completed=0
 for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
-  "$APPWRITE_BIN" --json backups get-archive --archive-id "$archive_id" > "$scratch/archive.json"
+  if ! read_json_bounded "$scratch/archive.json" backups get-archive --archive-id "$archive_id"; then
+    sleep "$RESTORE_DRILL_POLL_SECONDS"
+    continue
+  fi
   archive_state=$(node -e '
     const fs = require("node:fs");
     const [path, id, resourceId] = process.argv.slice(1);
@@ -422,9 +488,14 @@ for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
     } else process.stdout.write(archive.status ?? "unknown");
   ' "$scratch/archive.json" "$archive_id" "$source_database_id")
   case "$archive_state" in
-    completed) archive_completed=1; break ;;
+    completed) archive_completed=1; cleanup_deferred_reason=; break ;;
     pending|processing|uploading) ;;
-    failed|skipped|empty|identity-mismatch|*)
+    failed|skipped|empty)
+      cleanup_deferred_reason=
+      echo "Restore drill archive entered an unexpected state: $archive_state" >&2
+      exit 1
+      ;;
+    identity-mismatch|*)
       echo "Restore drill archive entered an unexpected state: $archive_state" >&2
       exit 1
       ;;
@@ -432,7 +503,7 @@ for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
   sleep "$RESTORE_DRILL_POLL_SECONDS"
 done
 if [[ "$archive_completed" != 1 ]]; then
-  echo "Timed out waiting for the restore drill archive" >&2
+  echo "Timed out waiting for the restore drill archive; ${last_read_error:-no terminal response was observed}" >&2
   exit 1
 fi
 
@@ -441,6 +512,8 @@ verify_fixture_row "$source_database_id" "$scratch/source-row-after-archive.json
 
 configure_client "$APPWRITE_BACKUP_API_KEY"
 target_owned=1
+restoration_started=1
+cleanup_deferred_reason="restoration did not reach a terminal state"
 "$APPWRITE_BIN" --json backups create-restoration \
   --archive-id "$archive_id" \
   --services tablesdb \
@@ -461,8 +534,11 @@ restoration_id=$(node -e '
 
 restoration_completed=0
 for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
-  "$APPWRITE_BIN" --json backups get-restoration \
-    --restoration-id "$restoration_id" > "$scratch/restoration.json"
+  if ! read_json_bounded "$scratch/restoration.json" backups get-restoration \
+    --restoration-id "$restoration_id"; then
+    sleep "$RESTORE_DRILL_POLL_SECONDS"
+    continue
+  fi
   restoration_state=$(node -e '
     const fs = require("node:fs");
     const [path, id, archiveId] = process.argv.slice(1);
@@ -474,9 +550,18 @@ for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
     } else process.stdout.write(restoration.status ?? "unknown");
   ' "$scratch/restoration.json" "$restoration_id" "$archive_id")
   case "$restoration_state" in
-    completed) restoration_completed=1; break ;;
+    completed)
+      restoration_completed=1
+      cleanup_deferred_reason="restored target database did not reach ready"
+      break
+      ;;
     pending|downloading|processing) ;;
-    failed|identity-mismatch|*)
+    failed)
+      cleanup_deferred_reason=
+      echo "Restore drill restoration entered an unexpected state: $restoration_state" >&2
+      exit 1
+      ;;
+    identity-mismatch|*)
       echo "Restore drill restoration entered an unexpected state: $restoration_state" >&2
       exit 1
       ;;
@@ -484,12 +569,13 @@ for ((attempt = 1; attempt <= RESTORE_DRILL_MAX_POLLS; attempt += 1)); do
   sleep "$RESTORE_DRILL_POLL_SECONDS"
 done
 if [[ "$restoration_completed" != 1 ]]; then
-  echo "Timed out waiting for the restore drill restoration" >&2
+  echo "Timed out waiting for the restore drill restoration; ${last_read_error:-no terminal response was observed}" >&2
   exit 1
 fi
 
 configure_client "$APPWRITE_DEPLOY_API_KEY"
 wait_for_database_ready "$target_database_id" "$target_database_name" "$scratch/target-ready.json"
+cleanup_deferred_reason=
 "$APPWRITE_BIN" --json tables-db update \
   --database-id "$target_database_id" --enabled false > "$scratch/target-disabled.json"
 target_state=$(database_state "$target_database_id" "$target_database_name")
@@ -498,18 +584,16 @@ if [[ "$target_state" != match-disabled ]]; then
   exit 1
 fi
 
-"$APPWRITE_BIN" --json tables-db list-tables \
-  --database-id "$target_database_id" --limit 100 > "$scratch/target-tables.json"
+read_json_required "$scratch/target-tables.json" tables-db list-tables \
+  --database-id "$target_database_id" --limit 100
 node -e '
   const fs = require("node:fs");
   const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const ids = (data.tables ?? []).map((table) => table.$id).sort();
   if (JSON.stringify(ids) !== JSON.stringify(["fixture"])) process.exit(1);
 ' "$scratch/target-tables.json"
-"$APPWRITE_BIN" --json tables-db get-column \
-  --database-id "$target_database_id" \
-  --table-id "$fixture_table_id" \
-  --key value > "$scratch/target-column.json"
+read_json_required "$scratch/target-column.json" tables-db get-column \
+  --database-id "$target_database_id" --table-id "$fixture_table_id" --key value
 node -e '
   const fs = require("node:fs");
   const column = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -520,7 +604,7 @@ verify_fixture_row "$target_database_id" "$scratch/target-row.json"
 verify_fixture_row "$source_database_id" "$scratch/source-row-final.json"
 
 runtime_after="$scratch/runtime-after.json"
-"$APPWRITE_BIN" --json tables-db get --database-id "$APPWRITE_DATABASE_ID" > "$runtime_after"
+read_json_required "$runtime_after" tables-db get --database-id "$APPWRITE_DATABASE_ID"
 node -e '
   const fs = require("node:fs");
   const [beforePath, afterPath] = process.argv.slice(1);

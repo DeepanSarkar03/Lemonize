@@ -104,8 +104,10 @@ jobs:
           REGISTRY_BASE_URL: ${{ vars.REGISTRY_BASE_URL }}
         run: |
           ready=$(curl --fail --silent --show-error --retry 4 --retry-all-errors \
+            --connect-timeout 5 --max-time 30 \
             "$REGISTRY_BASE_URL/ready")
           limits=$(curl --fail --silent --show-error --retry 4 --retry-all-errors \
+            --connect-timeout 5 --max-time 30 \
             "$REGISTRY_BASE_URL/v1/limits")
           node -e '
             const ready = JSON.parse(process.argv[1]);
