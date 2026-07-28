@@ -159,6 +159,18 @@ describe('Clerk session JWT verification', () => {
     ).rejects.toThrow();
   });
 
+  it.each([
+    ['fractional', Math.floor(Date.now() / 1_000) + 300.5],
+    ['unsafe integer', Number.MAX_SAFE_INTEGER + 1],
+  ] as const)('rejects a token with a %s expiry claim', async (_label, expiresAt) => {
+    await expect(
+      verifyClerkToken(await token({ expiresAt }), {
+        issuer: ISSUER,
+        authorizedParties: [AUTHORIZED_PARTY],
+      }),
+    ).rejects.toThrow();
+  });
+
   it('rejects unsafe verifier configuration before fetching remote keys', async () => {
     const fetchesBefore = jwksFetch.mock.calls.length;
     await expect(

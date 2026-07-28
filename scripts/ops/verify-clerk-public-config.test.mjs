@@ -232,6 +232,18 @@ test('requires a bypass secret for a separate protected deployment probe', async
   );
 });
 
+test('rejects control characters in a Vercel automation bypass secret', async () => {
+  for (const controlCharacter of ['\u0000', '\u001f', '\u007f']) {
+    await assert.rejects(
+      verify({
+        probeBaseUrl: PROBE_ORIGIN,
+        vercelAutomationBypassSecret: `${VERCEL_BYPASS_SECRET}${controlCharacter}`,
+      }).result,
+      /requires a valid Vercel automation bypass secret/,
+    );
+  }
+});
+
 test('never sends a Vercel bypass secret to a non-Vercel probe origin', async () => {
   await assert.rejects(
     verify({

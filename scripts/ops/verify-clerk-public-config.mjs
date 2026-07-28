@@ -116,6 +116,14 @@ function exactOriginList(value, label) {
   return origins;
 }
 
+function hasControlCharacter(value) {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint <= 0x1f || codePoint === 0x7f) return true;
+  }
+  return false;
+}
+
 function webProbeHeaders(probeUrl, webUrl, vercelAutomationBypassSecret) {
   const headers = { 'user-agent': 'Lemonize-Clerk-Drift-Check/1.0' };
   if (probeUrl.origin === webUrl.origin) {
@@ -135,7 +143,7 @@ function webProbeHeaders(probeUrl, webUrl, vercelAutomationBypassSecret) {
       vercelAutomationBypassSecret.length >= 16 &&
       vercelAutomationBypassSecret.length <= 1024 &&
       vercelAutomationBypassSecret.trim() === vercelAutomationBypassSecret &&
-      !/[\u0000-\u001f\u007f]/.test(vercelAutomationBypassSecret),
+      !hasControlCharacter(vercelAutomationBypassSecret),
     'separate deployment probe origin requires a valid Vercel automation bypass secret',
   );
   headers['x-vercel-protection-bypass'] = vercelAutomationBypassSecret;
