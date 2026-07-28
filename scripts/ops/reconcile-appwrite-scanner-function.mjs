@@ -46,8 +46,13 @@ export function scannerFunctionConfiguration() {
 }
 
 export function buildScannerFunctionRequest({ command, endpoint, projectId, apiKey, functionId }) {
-  if (command !== 'create' && command !== 'update' && command !== 'get') {
-    throw new Error('Scanner function command must be create, update, or get');
+  if (
+    command !== 'create' &&
+    command !== 'update' &&
+    command !== 'get' &&
+    command !== 'list-variables'
+  ) {
+    throw new Error('Scanner function command must be create, update, get, or list-variables');
   }
   requireId(projectId, 'APPWRITE_PROJECT_ID');
   requireId(functionId, 'APPWRITE_SCANNER_FUNCTION_ID');
@@ -70,12 +75,23 @@ export function buildScannerFunctionRequest({ command, endpoint, projectId, apiK
   }
 
   const baseUrl = base.href.replace(/\/+$/, '');
-  const resource =
-    command === 'create'
-      ? `${baseUrl}/functions`
-      : `${baseUrl}/functions/${encodeURIComponent(functionId)}`;
+  let resource;
+  if (command === 'create') {
+    resource = `${baseUrl}/functions`;
+  } else if (command === 'list-variables') {
+    const variablesUrl = new URL(
+      `${baseUrl}/functions/${encodeURIComponent(functionId)}/variables`,
+    );
+    variablesUrl.searchParams.append(
+      'queries[]',
+      JSON.stringify({ method: 'limit', values: [100] }),
+    );
+    resource = variablesUrl.href;
+  } else {
+    resource = `${baseUrl}/functions/${encodeURIComponent(functionId)}`;
+  }
   const body =
-    command === 'get'
+    command === 'get' || command === 'list-variables'
       ? undefined
       : {
           ...(command === 'create' ? { functionId } : {}),
@@ -131,7 +147,15 @@ export async function reconcileScannerFunction(options, fetchImpl = fetch) {
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
     throw new Error('Appwrite function request returned an invalid object');
   }
-  if (result.$id !== options.functionId) {
+  if (options.command === 'list-variables') {
+    if (
+      !Number.isSafeInteger(result.total) ||
+      !Array.isArray(result.variables) ||
+      result.total !== result.variables.length
+    ) {
+      throw new Error('Appwrite returned an invalid function variable list');
+    }
+  } else if (result.$id !== options.functionId) {
     throw new Error('Appwrite returned a different function than requested');
   }
   return result;

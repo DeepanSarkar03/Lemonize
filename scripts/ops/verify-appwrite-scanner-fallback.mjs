@@ -156,13 +156,44 @@ export function verifyScannerVariables({
       item.resourceType !== 'function' ||
       item.resourceId !== functionId ||
       item.secret !== desired.secret ||
-      (desired.secret ? item.value != null : item.value !== desired.value)
+      (desired.secret ? item.value !== '' : item.value !== desired.value)
     ) {
       throw new Error('Scanner function variables do not match the exact allowlist');
     }
     seen.add(item.key);
   }
   return functionId;
+}
+
+export function verifyRegistryWriteGate(payload, expectedRegistryUrl) {
+  const limits = requireObject(payload, 'Registry limits');
+  let expected;
+  try {
+    expected = new URL(expectedRegistryUrl);
+  } catch {
+    throw new Error('Expected registry URL is invalid');
+  }
+  if (
+    expected.protocol !== 'https:' ||
+    expected.username !== '' ||
+    expected.password !== '' ||
+    expected.pathname !== '/' ||
+    expected.search !== '' ||
+    expected.hash !== ''
+  ) {
+    throw new Error('Expected registry URL must be a plain HTTPS origin');
+  }
+  const normalized = expected.href.replace(/\/+$/, '');
+  if (
+    limits.registryBaseUrl !== normalized ||
+    limits.registryMode !== 'read_only' ||
+    limits.allowPublicPublish !== false ||
+    limits.publishRestricted !== true ||
+    limits.openSignup !== false
+  ) {
+    throw new Error('Live registry writes are not safely gated');
+  }
+  return normalized;
 }
 
 export function scannerChallengeHeaders(secret, now = new Date()) {
@@ -409,6 +440,17 @@ async function main() {
         maxPackageFiles,
       })}\n`,
     );
+    return;
+  }
+  if (args[0] === '--registry-write-gate') {
+    const [, limitsFile, expectedRegistryUrl] = args;
+    if (!expectedRegistryUrl) {
+      throw new Error(
+        'Usage: verify-appwrite-scanner-fallback.mjs --registry-write-gate <limits.json> <registry-url>',
+      );
+    }
+    const payload = JSON.parse(await readFile(limitsFile, 'utf8'));
+    process.stdout.write(`${verifyRegistryWriteGate(payload, expectedRegistryUrl)}\n`);
     return;
   }
   if (args[0] === '--challenge-headers') {

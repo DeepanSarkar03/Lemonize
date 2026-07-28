@@ -10,6 +10,7 @@ import {
   verifyScannerFallback,
   verifyScannerChallenge,
   verifyScannerFunctionConfiguration,
+  verifyRegistryWriteGate,
   verifyScannerVariables,
 } from './verify-appwrite-scanner-fallback.mjs';
 import {
@@ -98,7 +99,7 @@ function deploymentPayload(overrides = {}) {
 
 const variableValues = {
   REGISTRY_INTERNAL_URL: 'https://registry.example.test',
-  SCAN_SIGNING_SECRET: null,
+  SCAN_SIGNING_SECRET: '',
   APPWRITE_QUARANTINE_BUCKET_ID: 'quarantine',
   MAX_ARCHIVE_BYTES: '10485760',
   MAX_PACKAGE_FILES: '2000',
@@ -226,6 +227,42 @@ test('reconciles empty Appwrite arrays as JSON instead of bare CLI flags', async
   assert.equal(get.init.method, 'GET');
   assert.equal(get.init.headers['x-appwrite-response-format'], '1.9.5');
   assert.equal('body' in get.init, false);
+
+  const listVariables = buildScannerFunctionRequest({
+    ...options,
+    command: 'list-variables',
+  });
+  const variablesUrl = new URL(listVariables.url);
+  assert.equal(
+    `${variablesUrl.origin}${variablesUrl.pathname}`,
+    `https://fra.cloud.appwrite.io/v1/functions/${functionId}/variables`,
+  );
+  assert.deepEqual(JSON.parse(variablesUrl.searchParams.get('queries[]')), {
+    method: 'limit',
+    values: [100],
+  });
+  assert.equal(listVariables.init.method, 'GET');
+  assert.equal('body' in listVariables.init, false);
+
+  const variables = await reconcileScannerFunction(
+    { ...options, command: 'list-variables' },
+    async () => new Response(JSON.stringify({ total: 0, variables: [] }), { status: 200 }),
+  );
+  assert.deepEqual(variables, { total: 0, variables: [] });
+  await assert.rejects(
+    reconcileScannerFunction(
+      { ...options, command: 'list-variables' },
+      async () => new Response(JSON.stringify({ total: 0 }), { status: 200 }),
+    ),
+    /invalid function variable list/,
+  );
+  await assert.rejects(
+    reconcileScannerFunction(
+      { ...options, command: 'list-variables' },
+      async () => new Response(JSON.stringify({ total: 101, variables: [] }), { status: 200 }),
+    ),
+    /invalid function variable list/,
+  );
 });
 
 test('Appwrite reconciliation validates destinations and redacts API errors', async () => {
@@ -413,6 +450,24 @@ test('accepts only the exact scanner and empty project variable sets', () => {
     /exact allowlist/,
   );
 
+  const overClassified = variablePayload();
+  const publicRegistryUrl = overClassified.variables.find(
+    (item) => item.key === 'REGISTRY_INTERNAL_URL',
+  );
+  publicRegistryUrl.secret = true;
+  publicRegistryUrl.value = '';
+  assert.throws(
+    () => verifyVariables({ functionVariablesPayload: overClassified }),
+    /exact allowlist/,
+  );
+
+  const wrongSecretReadback = variablePayload();
+  wrongSecretReadback.variables.find((item) => item.key === 'SCAN_SIGNING_SECRET').value = null;
+  assert.throws(
+    () => verifyVariables({ functionVariablesPayload: wrongSecretReadback }),
+    /exact allowlist/,
+  );
+
   assert.throws(
     () =>
       verifyVariables({
@@ -423,6 +478,33 @@ test('accepts only the exact scanner and empty project variable sets', () => {
       }),
     /Project-level Appwrite variables are not allowed/,
   );
+});
+
+test('allows secret classification repair only behind the live read-only gate', () => {
+  const limits = {
+    registryBaseUrl: 'https://registry-staging.lemonize.cyou',
+    registryMode: 'read_only',
+    allowPublicPublish: false,
+    publishRestricted: true,
+    openSignup: false,
+  };
+  assert.equal(
+    verifyRegistryWriteGate(limits, 'https://registry-staging.lemonize.cyou'),
+    'https://registry-staging.lemonize.cyou',
+  );
+  for (const drift of [
+    { registryMode: 'public' },
+    { allowPublicPublish: true },
+    { publishRestricted: false },
+    { openSignup: true },
+    { registryBaseUrl: 'https://registry.lemonize.cyou' },
+  ]) {
+    assert.throws(
+      () =>
+        verifyRegistryWriteGate({ ...limits, ...drift }, 'https://registry-staging.lemonize.cyou'),
+      /writes are not safely gated/,
+    );
+  }
 });
 
 test('proves the hidden signing secret through a side-effect-free active execution', () => {
