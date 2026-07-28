@@ -68,7 +68,7 @@ The CLI release workflow publishes `@lemonize/cli` with npm OIDC provenance. The
 
 ## What the deployment reconciles
 
-The workflow renders a temporary Wrangler configuration from protected variables and rejects an Appwrite project-ID mismatch with the selected checked-in definition. It does not compare every Cloudflare, Clerk, or Vercel identifier across GitHub environments, so the operator must verify those isolation checks. It pushes Appwrite TablesDB/Storage/function definitions before deploying the Worker.
+The workflow renders a temporary Wrangler configuration from protected variables and rejects an Appwrite project-ID mismatch with the selected checked-in definition. It does not compare every Cloudflare, Clerk, or Vercel identifier across GitHub environments, so the operator must verify those isolation checks. It pushes Appwrite TablesDB and Storage definitions before deploying the Worker. Read-only deployments skip rebuilding the artifact scanner because the publish path is disabled and cannot invoke it. Any deployment whose registry mode is not `read_only`, or whose public-publish flag is enabled, must build and activate the scanner successfully before the Worker can deploy.
 
 The scanner is reconciled to:
 

@@ -2,7 +2,7 @@ import type { MetadataRoute } from 'next';
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const updated = new Date();
-  return ['/', '/docs', '/explore', '/terms', '/privacy'].map((path) => ({
+  return ['/', '/docs', '/explore', '/terms', '/privacy', '/code-of-conduct'].map((path) => ({
     url: `https://lemonize.cyou${path}`,
     lastModified: updated,
     changeFrequency: path === '/' ? 'weekly' : 'monthly',

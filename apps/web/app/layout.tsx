@@ -111,6 +111,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/privacy" className="hit-slop hover:text-citron">
                   Privacy
                 </Link>
+                <Link href="/code-of-conduct" className="hit-slop hover:text-citron">
+                  Code of Conduct
+                </Link>
               </div>
             </div>
           </footer>

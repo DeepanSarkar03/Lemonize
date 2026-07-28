@@ -205,6 +205,11 @@ jobs:
           node scripts/ops/reconcile-appwrite-schema.mjs "$DEPLOY_ENV"
 
       - name: Reconcile and deploy Appwrite artifact scanner
+        # The scanner is reachable only from the publish finalization path.
+        # Keep read-only releases independent of Appwrite's build service, but
+        # require a fresh successful scanner deployment before any environment
+        # can accept writes.
+        if: ${{ vars.REGISTRY_MODE != 'read_only' || vars.ALLOW_PUBLIC_PUBLISH == 'true' }}
         env:
           APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
           APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
