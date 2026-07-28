@@ -9,8 +9,14 @@ import {
   scannerChallengeHeaders,
   verifyScannerFallback,
   verifyScannerChallenge,
+  verifyScannerFunctionConfiguration,
   verifyScannerVariables,
 } from './verify-appwrite-scanner-fallback.mjs';
+import {
+  buildScannerFunctionRequest,
+  reconcileScannerFunction,
+  scannerFunctionConfiguration,
+} from './reconcile-appwrite-scanner-function.mjs';
 
 const functionId = 'artifact-scanner';
 const deploymentId = 'ready-deployment-1';
@@ -67,7 +73,10 @@ function functionPayload(overrides = {}) {
     installationId: '',
     providerRepositoryId: '',
     providerBranch: '',
+    providerSilentMode: false,
     providerRootDirectory: '',
+    providerBranches: [],
+    providerPaths: [],
     ...overrides,
   };
 }
@@ -150,6 +159,89 @@ async function verify(input = {}) {
 
 test('accepts only an active ready deployment with byte-identical source', async () => {
   assert.equal(await verify(), deploymentId);
+});
+
+test('accepts exact scanner configuration without requiring a live deployment', () => {
+  assert.equal(
+    verifyScannerFunctionConfiguration(functionPayload({ live: false }), functionId),
+    functionId,
+  );
+  for (const drift of [
+    { execute: ['any'] },
+    { events: ['users.*.create'] },
+    { providerBranches: ['*'] },
+    { providerPaths: ['**/*'] },
+    { providerSilentMode: true },
+  ]) {
+    assert.throws(
+      () => verifyScannerFunctionConfiguration(functionPayload(drift), functionId),
+      /configuration has drifted/,
+    );
+  }
+});
+
+test('reconciles empty Appwrite arrays as JSON instead of bare CLI flags', async () => {
+  const apiKey = 'test-api-key';
+  const options = {
+    command: 'update',
+    endpoint: 'https://fra.cloud.appwrite.io/v1/',
+    projectId: 'lemonize-staging-2026',
+    apiKey,
+    functionId,
+  };
+  const request = buildScannerFunctionRequest(options);
+  assert.equal(request.url, `https://fra.cloud.appwrite.io/v1/functions/${functionId}`);
+  assert.equal(request.init.method, 'PUT');
+  assert.equal(request.init.headers['x-appwrite-key'], apiKey);
+  assert.deepEqual(JSON.parse(request.init.body), scannerFunctionConfiguration());
+
+  let captured;
+  const result = await reconcileScannerFunction(options, async (url, init) => {
+    captured = { url, init };
+    return new Response(JSON.stringify(functionPayload({ live: false })), { status: 200 });
+  });
+  assert.equal(result.$id, functionId);
+  assert.deepEqual(captured, request);
+
+  const create = buildScannerFunctionRequest({ ...options, command: 'create' });
+  assert.equal(create.url, 'https://fra.cloud.appwrite.io/v1/functions');
+  assert.equal(create.init.method, 'POST');
+  assert.deepEqual(JSON.parse(create.init.body), {
+    functionId,
+    ...scannerFunctionConfiguration(),
+  });
+});
+
+test('Appwrite reconciliation validates destinations and redacts API errors', async () => {
+  assert.throws(
+    () =>
+      buildScannerFunctionRequest({
+        command: 'update',
+        endpoint: 'http://fra.cloud.appwrite.io/v1',
+        projectId: 'lemonize-staging-2026',
+        apiKey: 'secret-key',
+        functionId,
+      }),
+    /HTTPS URL/,
+  );
+  await assert.rejects(
+    reconcileScannerFunction(
+      {
+        command: 'update',
+        endpoint: 'https://fra.cloud.appwrite.io/v1',
+        projectId: 'lemonize-staging-2026',
+        apiKey: 'secret-key',
+        functionId,
+      },
+      async () => new Response('request rejected for secret-key', { status: 400 }),
+    ),
+    (error) => {
+      assert.match(error.message, /HTTP 400/);
+      assert.match(error.message, /\[REDACTED\]/);
+      assert.doesNotMatch(error.message, /secret-key/);
+      return true;
+    },
+  );
 });
 
 test('rejects inactive, failed, or configuration-drifted deployments', async () => {

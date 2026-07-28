@@ -29,18 +29,15 @@ function sameStringSet(value, expected) {
   );
 }
 
-export function verifyScannerFunctionState(functionPayload, expectedDeploymentId, functionId) {
+export function verifyScannerFunctionConfiguration(functionPayload, functionId) {
   const fn = requireObject(functionPayload, 'Function');
-  if (!ID_PATTERN.test(expectedDeploymentId) || !ID_PATTERN.test(functionId)) {
-    throw new Error('Fallback deployment and function IDs must be valid Appwrite IDs');
-  }
-  if (fn.$id !== functionId || fn.deploymentId !== expectedDeploymentId) {
-    throw new Error('The expected fallback is not the function active deployment');
+  if (!ID_PATTERN.test(functionId)) {
+    throw new Error('Function ID must be a valid Appwrite ID');
   }
   if (
+    fn.$id !== functionId ||
     fn.name !== 'Lemonize artifact scanner' ||
     fn.enabled !== true ||
-    fn.live !== true ||
     fn.logging !== true ||
     fn.runtime !== 'node-25' ||
     fn.timeout !== 60 ||
@@ -54,8 +51,26 @@ export function verifyScannerFunctionState(functionPayload, expectedDeploymentId
     fn.installationId !== '' ||
     fn.providerRepositoryId !== '' ||
     fn.providerBranch !== '' ||
-    fn.providerRootDirectory !== ''
+    fn.providerSilentMode !== false ||
+    fn.providerRootDirectory !== '' ||
+    !sameStringSet(fn.providerBranches, []) ||
+    !sameStringSet(fn.providerPaths, [])
   ) {
+    throw new Error('The scanner function configuration has drifted');
+  }
+  return functionId;
+}
+
+export function verifyScannerFunctionState(functionPayload, expectedDeploymentId, functionId) {
+  const fn = requireObject(functionPayload, 'Function');
+  if (!ID_PATTERN.test(expectedDeploymentId) || !ID_PATTERN.test(functionId)) {
+    throw new Error('Fallback deployment and function IDs must be valid Appwrite IDs');
+  }
+  verifyScannerFunctionConfiguration(fn, functionId);
+  if (fn.deploymentId !== expectedDeploymentId) {
+    throw new Error('The expected fallback is not the function active deployment');
+  }
+  if (fn.live !== true) {
     throw new Error('The active scanner function configuration has drifted');
   }
   return expectedDeploymentId;
@@ -328,6 +343,17 @@ export async function verifyScannerFallback({
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args[0] === '--configuration-only') {
+    const [, functionFile, functionId] = args;
+    if (!functionId) {
+      throw new Error(
+        'Usage: verify-appwrite-scanner-fallback.mjs --configuration-only <function.json> <function-id>',
+      );
+    }
+    const functionPayload = JSON.parse(await readFile(functionFile, 'utf8'));
+    process.stdout.write(`${verifyScannerFunctionConfiguration(functionPayload, functionId)}\n`);
+    return;
+  }
   if (args[0] === '--function-only') {
     const [, functionFile, expectedDeploymentId, functionId] = args;
     if (!functionId) {
