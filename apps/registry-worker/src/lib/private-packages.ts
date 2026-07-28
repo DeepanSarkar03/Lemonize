@@ -26,14 +26,12 @@ interface ClerkPlanJson {
 interface ClerkSubscriptionItemJson {
   status?: unknown;
   plan_period?: unknown;
-  payer_id?: unknown;
   is_free_trial?: unknown;
   plan?: ClerkPlanJson | null;
 }
 
 interface ClerkSubscriptionJson {
   status?: unknown;
-  payer_id?: unknown;
   subscription_items?: unknown;
 }
 
@@ -57,24 +55,16 @@ function paidPlanAmount(item: ClerkSubscriptionItemJson, plan: ClerkPlanJson): n
  * a zero-priced Plan, a past-due subscription, or malformed response never
  * grants private-package access.
  */
-export function clerkSubscriptionHasPaidFeature(
-  value: unknown,
-  featureSlug: string,
-  expectedPayerId?: string,
-): boolean {
+export function clerkSubscriptionHasPaidFeature(value: unknown, featureSlug: string): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const subscription = value as ClerkSubscriptionJson;
   if (subscription.status !== 'active' || !Array.isArray(subscription.subscription_items)) {
     return false;
   }
-  if (expectedPayerId && subscription.payer_id !== expectedPayerId) return false;
 
   return (subscription.subscription_items as ClerkSubscriptionItemJson[]).some((item) => {
     if (!item || typeof item !== 'object' || item.status !== 'active') return false;
     if (item.is_free_trial === true) return false;
-    if (expectedPayerId && item.payer_id !== undefined && item.payer_id !== expectedPayerId) {
-      return false;
-    }
     const plan = item.plan;
     if (!plan || typeof plan !== 'object') return false;
     if (plan.is_default !== false || plan.is_recurring !== true || plan.has_base_fee !== true) {
@@ -147,7 +137,10 @@ export async function hasPaidPrivatePackageEntitlement(
         'Private-package entitlement could not be verified.',
       );
     }
-    entitled = clerkSubscriptionHasPaidFeature(body, config.privatePackagesFeature, clerkId);
+    // The user-specific endpoint is the identity boundary. Clerk's payer_id
+    // fields identify Commerce payer records and are intentionally not
+    // compared with the Clerk user ID in the request path.
+    entitled = clerkSubscriptionHasPaidFeature(body, config.privatePackagesFeature);
   } else if (response.status !== 404) {
     throw new LemonizeError(
       503,

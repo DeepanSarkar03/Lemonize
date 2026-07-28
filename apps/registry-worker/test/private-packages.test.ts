@@ -13,7 +13,7 @@ function paidItem(overrides: Record<string, unknown> = {}) {
   return {
     status: 'active',
     plan_period: 'month',
-    payer_id: 'user_paid',
+    payer_id: 'payer_commerce_123',
     is_free_trial: false,
     plan: {
       is_default: false,
@@ -30,7 +30,7 @@ function paidItem(overrides: Record<string, unknown> = {}) {
 function subscription(...items: unknown[]) {
   return {
     status: 'active',
-    payer_id: 'user_paid',
+    payer_id: 'payer_commerce_123',
     subscription_items: items,
   };
 }
@@ -49,43 +49,30 @@ describe('private package policy', () => {
   });
 
   it('accepts only an active, recurring, non-default paid Clerk plan with the feature', () => {
-    expect(
-      clerkSubscriptionHasPaidFeature(subscription(paidItem()), feature.slug, 'user_paid'),
-    ).toBe(true);
+    // Clerk Commerce payer IDs are deliberately different from Clerk user IDs.
+    expect(clerkSubscriptionHasPaidFeature(subscription(paidItem()), feature.slug)).toBe(true);
     expect(
       clerkSubscriptionHasPaidFeature(
         subscription(paidItem({ plan_period: 'annual' })),
         feature.slug,
-        'user_paid',
       ),
     ).toBe(true);
 
     for (const item of [
       paidItem({ status: 'past_due' }),
       paidItem({ is_free_trial: true }),
-      paidItem({ payer_id: 'user_other' }),
       paidItem({ plan: { ...paidItem().plan, is_default: true } }),
       paidItem({ plan: { ...paidItem().plan, is_recurring: false } }),
       paidItem({ plan: { ...paidItem().plan, has_base_fee: false } }),
       paidItem({ plan: { ...paidItem().plan, fee: { amount: 0 } } }),
       paidItem({ plan: { ...paidItem().plan, features: [{ slug: 'other' }] } }),
     ]) {
-      expect(clerkSubscriptionHasPaidFeature(subscription(item), feature.slug, 'user_paid')).toBe(
-        false,
-      );
+      expect(clerkSubscriptionHasPaidFeature(subscription(item), feature.slug)).toBe(false);
     }
     expect(
       clerkSubscriptionHasPaidFeature(
         { ...subscription(paidItem()), status: 'past_due' },
         feature.slug,
-        'user_paid',
-      ),
-    ).toBe(false);
-    expect(
-      clerkSubscriptionHasPaidFeature(
-        { ...subscription(paidItem()), payer_id: 'user_other' },
-        feature.slug,
-        'user_paid',
       ),
     ).toBe(false);
     expect(clerkSubscriptionHasPaidFeature({ subscription_items: 'invalid' }, feature.slug)).toBe(

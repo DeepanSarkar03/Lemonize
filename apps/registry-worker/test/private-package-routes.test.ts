@@ -184,14 +184,14 @@ const ctx = () =>
     passThroughOnException: vi.fn(),
     props: {},
   }) as unknown as ExecutionContext;
-const paidSubscription = (payer = 'user_owner') => ({
+const paidSubscription = () => ({
   status: 'active',
-  payer_id: payer,
+  payer_id: 'payer_commerce_123',
   subscription_items: [
     {
       status: 'active',
       plan_period: 'month',
-      payer_id: payer,
+      payer_id: 'payer_commerce_123',
       is_free_trial: false,
       plan: {
         is_default: false,
@@ -327,7 +327,7 @@ describe('paid private package routes', () => {
     });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => Response.json(paidSubscription('user_stranger'))),
+      vi.fn(async () => Response.json(paidSubscription())),
     );
     const hidden = await app().request(
       'https://registry.test/v1/packages/%40owner%2Fprivate',
