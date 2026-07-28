@@ -86,6 +86,14 @@ verify_active_secret() {
     --challenge-result "$challenge_file" "$expected_deployment_id" >/dev/null
 }
 
+# The pinned CLI response schema omits build/runtime specification fields.
+# Read through the exact helper schema so every configuration verifier sees all
+# mutable security and cost controls.
+read_scanner_function() {
+  local destination=$1
+  node "$script_dir/reconcile-appwrite-scanner-function.mjs" get > "$destination"
+}
+
 # Appwrite marks a function stale even after a no-op variable update. Preserve
 # fallback eligibility only when the pinned active deployment is already live,
 # its visible configuration is exact, and a signed no-side-effect execution
@@ -94,8 +102,7 @@ fallback_eligible=false
 fallback_id=${APPWRITE_SCANNER_FALLBACK_DEPLOYMENT_ID:-}
 if [[ "$function_command" == update && -n "$fallback_id" ]]; then
   preflight_function_file="$HOME/fallback-preflight-function.json"
-  if "$APPWRITE_BIN" --json functions get \
-      --function-id "$APPWRITE_SCANNER_FUNCTION_ID" > "$preflight_function_file" &&
+  if read_scanner_function "$preflight_function_file" &&
     node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
       --function-only "$preflight_function_file" "$fallback_id" \
       "$APPWRITE_SCANNER_FUNCTION_ID" >/dev/null &&
@@ -114,8 +121,7 @@ reconciled_function_file="$HOME/reconciled-function.json"
 # before any code or variable mutation can proceed.
 node "$script_dir/reconcile-appwrite-scanner-function.mjs" \
   "$function_command" > "$reconcile_response_file"
-"$APPWRITE_BIN" --json functions get \
-  --function-id "$APPWRITE_SCANNER_FUNCTION_ID" > "$reconciled_function_file"
+read_scanner_function "$reconciled_function_file"
 node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
   --configuration-only "$reconciled_function_file" \
   "$APPWRITE_SCANNER_FUNCTION_ID" >/dev/null
@@ -212,8 +218,7 @@ try_identical_active_fallback() {
   fallback_deployment_file="$fallback_dir/deployment.json"
   source_archive="$fallback_dir/source.tar.gz"
 
-  "$APPWRITE_BIN" --json functions get \
-    --function-id "$APPWRITE_SCANNER_FUNCTION_ID" > "$function_file" || return 1
+  read_scanner_function "$function_file" || return 1
   "$APPWRITE_BIN" --json functions get-deployment \
     --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
     --deployment-id "$fallback_id" > "$fallback_deployment_file" || return 1
@@ -232,8 +237,7 @@ try_identical_active_fallback() {
   # Re-read the active function after the source comparison to reject a
   # concurrent activation or configuration mutation before accepting reuse.
   verify_exact_variables fallback-final || return 1
-  "$APPWRITE_BIN" --json functions get \
-    --function-id "$APPWRITE_SCANNER_FUNCTION_ID" > "$final_function_file" || return 1
+  read_scanner_function "$final_function_file" || return 1
   final_verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
     --function-only "$final_function_file" "$fallback_id" \
     "$APPWRITE_SCANNER_FUNCTION_ID") || return 1
@@ -274,8 +278,7 @@ for attempt in $(seq 1 60); do
       ready_verification_error="$HOME/ready-function-verification.log"
       ready_verified_id=''
       for config_attempt in $(seq 1 12); do
-        "$APPWRITE_BIN" --json functions get \
-          --function-id "$APPWRITE_SCANNER_FUNCTION_ID" > "$ready_function_file"
+        read_scanner_function "$ready_function_file"
         if ready_verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
           --function-only "$ready_function_file" "$deployment_id" \
           "$APPWRITE_SCANNER_FUNCTION_ID" 2> "$ready_verification_error"); then
