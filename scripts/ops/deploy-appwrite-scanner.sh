@@ -58,8 +58,7 @@ verify_exact_variables() {
   local label=$1
   local function_variables_file="$HOME/function-variables-$label.json"
   local project_variables_file="$HOME/project-variables-$label.json"
-  "$APPWRITE_BIN" --json functions list-variables \
-    --function-id "$APPWRITE_SCANNER_FUNCTION_ID" --limit 100 > "$function_variables_file"
+  read_scanner_variables "$function_variables_file"
   "$APPWRITE_BIN" --json project list-variables \
     --limit 100 > "$project_variables_file"
   node "$script_dir/verify-appwrite-scanner-fallback.mjs" --variables \
@@ -92,6 +91,26 @@ verify_active_secret() {
 read_scanner_function() {
   local destination=$1
   node "$script_dir/reconcile-appwrite-scanner-function.mjs" get > "$destination"
+}
+
+read_scanner_variables() {
+  local destination=$1
+  node "$script_dir/reconcile-appwrite-scanner-function.mjs" \
+    list-variables > "$destination"
+}
+
+write_gate_verified=false
+verify_live_registry_write_gate() {
+  [[ "$write_gate_verified" == true ]] && return 0
+  local limits_file="$HOME/live-registry-limits.json"
+  local registry_url=${REGISTRY_BASE_URL%/}
+  curl --silent --show-error --fail-with-body \
+    --retry 3 --retry-all-errors --retry-delay 1 --max-time 15 \
+    --header 'Cache-Control: no-cache' \
+    "$registry_url/v1/limits?deployment_gate=$(date +%s)" > "$limits_file"
+  node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
+    --registry-write-gate "$limits_file" "$registry_url" >/dev/null
+  write_gate_verified=true
 }
 
 # Appwrite marks a function stale even after a no-op variable update. Preserve
@@ -127,8 +146,7 @@ node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
   "$APPWRITE_SCANNER_FUNCTION_ID" >/dev/null
 
 variables_file="$HOME/variables.json"
-"$APPWRITE_BIN" --json functions list-variables \
-  --function-id "$APPWRITE_SCANNER_FUNCTION_ID" --limit 100 > "$variables_file"
+read_scanner_variables "$variables_file"
 
 # The function uses Appwrite's short-lived execution key. Treat these six
 # custom values as an exact allowlist: inherited values such as NODE_OPTIONS,
@@ -162,7 +180,8 @@ upsert_variable() {
   local key=$2
   local value=$3
   local secret=$4
-  local existing_variable_id
+  local existing_variable_id existing_variable_secret create_variable_id preferred_id_in_use
+  create_variable_id=$variable_id
   existing_variable_id=$(node -e '
     const fs = require("node:fs");
     const [path, key] = process.argv.slice(1);
@@ -170,6 +189,42 @@ upsert_variable() {
     const variable = data.variables?.find((item) => item.key === key);
     if (variable?.$id) process.stdout.write(variable.$id);
   ' "$variables_file" "$key")
+  existing_variable_secret=$(node -e '
+    const fs = require("node:fs");
+    const [path, key] = process.argv.slice(1);
+    const data = JSON.parse(fs.readFileSync(path, "utf8"));
+    const variable = data.variables?.find((item) => item.key === key);
+    if (variable?.$id) process.stdout.write(String(variable.secret));
+  ' "$variables_file" "$key")
+  preferred_id_in_use=$(node -e '
+    const fs = require("node:fs");
+    const [path, id] = process.argv.slice(1);
+    const data = JSON.parse(fs.readFileSync(path, "utf8"));
+    process.stdout.write(String(data.variables?.some((item) => item.$id === id) ?? false));
+  ' "$variables_file" "$variable_id")
+  if [[ -z "$existing_variable_id" && "$preferred_id_in_use" == true ]]; then
+    # Variable IDs are not semantic. Let Appwrite choose a collision-free ID
+    # when another allowed key already occupies the preferred bootstrap ID.
+    create_variable_id='unique()'
+  fi
+  if [[ -n "$existing_variable_id" &&
+      "$existing_variable_secret" != true &&
+      "$existing_variable_secret" != false ]]; then
+    echo "Appwrite returned an invalid secret classification for $key" >&2
+    return 1
+  fi
+  if [[ -n "$existing_variable_id" &&
+      "$existing_variable_secret" == true && "$secret" == false ]]; then
+    # Appwrite refuses only the secret-to-non-secret transition in place.
+    # Preserve the existing ID so swapped or manually assigned IDs cannot
+    # collide with another allowed variable during the required re-creation.
+    verify_live_registry_write_gate || return 1
+    create_variable_id=$existing_variable_id
+    "$APPWRITE_BIN" --json functions delete-variable \
+      --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
+      --variable-id "$existing_variable_id" >/dev/null
+    existing_variable_id=''
+  fi
   if [[ -n "$existing_variable_id" ]]; then
     "$APPWRITE_BIN" --json functions update-variable \
       --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
@@ -180,7 +235,7 @@ upsert_variable() {
   else
     "$APPWRITE_BIN" --json functions create-variable \
       --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
-      --variable-id "$variable_id" \
+      --variable-id "$create_variable_id" \
       --key "$key" \
       --value "$value" \
       --secret "$secret" >/dev/null
@@ -290,6 +345,10 @@ for attempt in $(seq 1 60); do
       if [[ "$ready_verified_id" != "$deployment_id" ]]; then
         cat "$ready_verification_error" >&2
         echo "Ready scanner deployment did not become the exact live function configuration" >&2
+        exit 1
+      fi
+      if ! verify_active_secret "$deployment_id"; then
+        echo "Ready scanner deployment did not prove the configured signing secret" >&2
         exit 1
       fi
       echo "Appwrite scanner deployment $deployment_id is ready"
