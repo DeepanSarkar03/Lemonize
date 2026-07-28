@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
@@ -13,6 +14,11 @@ const hostname = 'lemonize-abc-team.vercel.app';
 const url = `https://${hostname}`;
 const projectId = 'prj_Lemonize';
 const sha = 'a'.repeat(40);
+
+const deployWorkflow = await readFile(
+  new URL('../../.github/workflows/deploy.yml', import.meta.url),
+  'utf8',
+);
 
 function inspect(overrides = {}) {
   return { id, url: hostname, readyState: 'READY', target: null, ...overrides };
@@ -122,4 +128,12 @@ test('rejects exact-deployment identity and commit drift', () => {
 test('resolves only ready, well-formed deployment IDs', () => {
   assert.equal(resolveReadyDeploymentId(inspect()), id);
   assert.throws(() => resolveReadyDeploymentId(inspect({ readyState: 'ERROR' })), /not ready/);
+});
+
+test('runs every Vercel operation from the repository root', () => {
+  const cwdArguments = [...deployWorkflow.matchAll(/--cwd\s+(?:"[^"]+"|\S+)/g)].map(
+    ([argument]) => argument,
+  );
+  assert.ok(cwdArguments.length > 0, 'deployment workflow has no checked Vercel working directory');
+  assert.deepEqual(new Set(cwdArguments), new Set(['--cwd "$GITHUB_WORKSPACE"']));
 });

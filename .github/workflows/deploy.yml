@@ -272,7 +272,7 @@ jobs:
 
           inspect_json="$RUNNER_TEMP/vercel-stable-before.json"
           deployment_json="$RUNNER_TEMP/vercel-stable-before-api.json"
-          vercel inspect "$WEB_BASE_URL" --cwd apps/web \
+          vercel inspect "$WEB_BASE_URL" --cwd "$GITHUB_WORKSPACE" \
             --token "$VERCEL_TOKEN" --format=json > "$inspect_json"
           previous_deployment_id=$(node scripts/ops/vercel-release-integrity.mjs \
             resolved-id "$inspect_json")
@@ -311,14 +311,16 @@ jobs:
           else
             target=preview
           fi
-          vercel pull --cwd apps/web \
+          # Both Vercel projects set Root Directory to apps/web. Run from the
+          # repository root so Vercel resolves that setting exactly once.
+          vercel pull --cwd "$GITHUB_WORKSPACE" \
             --yes --environment "$target" --token "$VERCEL_TOKEN"
-          vercel build --cwd apps/web \
+          vercel build --cwd "$GITHUB_WORKSPACE" \
             --yes --target "$target" --token "$VERCEL_TOKEN"
 
           deploy_json="$RUNNER_TEMP/vercel-deploy.json"
           deploy_args=(
-            vercel deploy --cwd apps/web --yes --prebuilt
+            vercel deploy --cwd "$GITHUB_WORKSPACE" --yes --prebuilt
             --target "$target" --token "$VERCEL_TOKEN" --no-color
             --format=json
             --meta "githubCommitSha=$release_sha"
@@ -361,7 +363,7 @@ jobs:
 
           inspect_json="$RUNNER_TEMP/vercel-exact-inspect.json"
           deployment_json="$RUNNER_TEMP/vercel-exact-api.json"
-          vercel inspect "$DEPLOYMENT_URL" --cwd apps/web \
+          vercel inspect "$DEPLOYMENT_URL" --cwd "$GITHUB_WORKSPACE" \
             --token "$VERCEL_TOKEN" --format=json > "$inspect_json"
           curl --silent --show-error --fail-with-body \
             --retry 3 --retry-all-errors --retry-delay 1 --max-time 30 \
@@ -405,11 +407,11 @@ jobs:
             DEPLOY_ENV DEPLOYMENT_ID WEB_BASE_URL
           echo "attempted=true" >> "$GITHUB_OUTPUT"
           if [[ "$DEPLOY_ENV" == production ]]; then
-            vercel promote "$DEPLOYMENT_ID" --cwd apps/web \
+            vercel promote "$DEPLOYMENT_ID" --cwd "$GITHUB_WORKSPACE" \
               --token "$VERCEL_TOKEN" --yes --timeout 2m
           else
             stable_hostname=$(node -e 'process.stdout.write(new URL(process.env.WEB_BASE_URL).hostname)')
-            vercel alias set "$DEPLOYMENT_ID" "$stable_hostname" --cwd apps/web \
+            vercel alias set "$DEPLOYMENT_ID" "$stable_hostname" --cwd "$GITHUB_WORKSPACE" \
               --token "$VERCEL_TOKEN" --non-interactive
           fi
           echo "succeeded=true" >> "$GITHUB_OUTPUT"
@@ -424,7 +426,7 @@ jobs:
             VERCEL_TOKEN WEB_BASE_URL EXPECTED_DEPLOYMENT_ID
           inspect_json="$RUNNER_TEMP/vercel-stable-after.json"
           for attempt in {1..12}; do
-            if vercel inspect "$WEB_BASE_URL" --cwd apps/web \
+            if vercel inspect "$WEB_BASE_URL" --cwd "$GITHUB_WORKSPACE" \
               --token "$VERCEL_TOKEN" --format=json > "$inspect_json"; then
               resolved_id=$(node scripts/ops/vercel-release-integrity.mjs \
                 resolved-id "$inspect_json") || resolved_id=''
@@ -475,21 +477,21 @@ jobs:
 
           inspect_json="$RUNNER_TEMP/vercel-rollback-current.json"
           if [[ "$DEPLOY_ENV" == production ]]; then
-            if ! vercel rollback "$PREVIOUS_DEPLOYMENT_ID" --cwd apps/web \
+            if ! vercel rollback "$PREVIOUS_DEPLOYMENT_ID" --cwd "$GITHUB_WORKSPACE" \
               --token "$VERCEL_TOKEN" --yes --timeout 1m; then
               echo "Vercel rollback command failed; verifying stable routing before failing closed" >&2
             fi
           else
             stable_hostname=$(node -e 'process.stdout.write(new URL(process.env.WEB_BASE_URL).hostname)')
             if ! vercel alias set "$PREVIOUS_DEPLOYMENT_ID" "$stable_hostname" \
-              --cwd apps/web --token "$VERCEL_TOKEN" --non-interactive; then
+              --cwd "$GITHUB_WORKSPACE" --token "$VERCEL_TOKEN" --non-interactive; then
               echo "Vercel alias rollback failed; verifying stable routing before failing closed" >&2
             fi
           fi
 
           consecutive_matches=0
           for attempt in {1..12}; do
-            if vercel inspect "$WEB_BASE_URL" --cwd apps/web \
+            if vercel inspect "$WEB_BASE_URL" --cwd "$GITHUB_WORKSPACE" \
               --token "$VERCEL_TOKEN" --format=json > "$inspect_json"; then
               restored_id=$(node scripts/ops/vercel-release-integrity.mjs \
                 resolved-id "$inspect_json") || restored_id=''
