@@ -307,11 +307,11 @@ for attempt in $(seq 1 60); do
 const fs = require('node:fs');
 const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 let logs = typeof data.buildLogs === 'string' ? data.buildLogs : '';
+logs = logs.replace(/\u001b\[[0-9;]*m/g, '');
 for (const name of ['APPWRITE_DEPLOY_API_KEY', 'SCANNER_SHARED_SECRET']) {
   const secret = process.env[name];
   if (secret) logs = logs.split(secret).join('[REDACTED]');
 }
-logs = logs.replace(/\u001b\[[0-9;]*m/g, '');
 const tail = logs
   .split(/\r?\n/)
   .filter((line) => line.trim().length > 0)

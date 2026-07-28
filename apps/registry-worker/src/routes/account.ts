@@ -48,6 +48,7 @@ function intQuery(value: string | undefined, fallback: number, max: number): num
 
 function packageWire(pkg: AppwriteRow<PackageData>) {
   return {
+    restricted: false as const,
     id: pkg.$id,
     name: pkg.name,
     status: pkg.status,
@@ -215,8 +216,24 @@ account.get('/account/packages', requireAuth, requireReader, async (c) => {
     total: false,
     queries: [AppwriteQuery.orderDesc('$updatedAt'), AppwriteQuery.limit(25)],
   });
+  const hasPrivatePackages = rows.rows.some((pkg) => packageVisibility(pkg) === 'private');
+  let privatePackagesEntitled = false;
+  if (hasPrivatePackages && c.get('config').allowPrivatePackages && c.get('clerkId')) {
+    try {
+      privatePackagesEntitled = await hasPaidPrivatePackageEntitlement(
+        c.env,
+        c.get('config'),
+        c.get('clerkId')!,
+      );
+    } catch {
+      // An unavailable entitlement provider must not expose private inventory.
+    }
+  }
   const packages = await Promise.all(
     rows.rows.map(async (pkg) => {
+      if (packageVisibility(pkg) === 'private' && !privatePackagesEntitled) {
+        return { name: pkg.name };
+      }
       const versions = await repo.listVersions(pkg.$id, {
         total: false,
         queries: [AppwriteQuery.limit(PUBLISH_QUOTAS.maxVersionsPerPackage)],

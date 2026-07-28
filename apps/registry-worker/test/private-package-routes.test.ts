@@ -50,14 +50,17 @@ vi.mock('../src/lib/auth.js', () => {
       await next();
     },
     requirePublisher: async (_c: Context<AppBindings>, next: Next) => next(),
+    requireReader: async (_c: Context<AppBindings>, next: Next) => next(),
+    requireClerkSession: async (_c: Context<AppBindings>, next: Next) => next(),
     refreshClerkUserForAuthorization: mocks.refreshPublisher,
   };
 });
 
-const [{ packages }, { tarball }, { publish, internalScan }] = await Promise.all([
+const [{ packages }, { tarball }, { publish, internalScan }, { account }] = await Promise.all([
   import('../src/routes/packages.js'),
   import('../src/routes/tarball.js'),
   import('../src/routes/publish.js'),
+  import('../src/routes/account.js'),
 ]);
 
 const system = (tableId: string, id: string) => ({
@@ -172,6 +175,7 @@ function app() {
   });
   result.route('/', internalScan);
   result.route('/v1', publish);
+  result.route('/v1', account);
   result.route('/v1', tarball);
   result.route('/v1', packages);
   result.onError((error, c) => handleError(error, c));
@@ -349,7 +353,7 @@ describe('paid private package routes', () => {
     const renewal = await app().request(
       'https://registry.test/v1/packages/%40owner%2Fprivate',
       { headers: { authorization: 'Bearer token' } },
-      testEnv(kv().binding),
+      testEnv(store.binding),
     );
     expect(renewal.status).toBe(402);
     expect(renewal.headers.get('cache-control')).toBe('private, no-store');
@@ -371,14 +375,28 @@ describe('paid private package routes', () => {
       status: 'running',
       attempts: 1,
     };
+    const updateVersion = vi.fn();
+    const updateReservation = vi.fn();
+    const failScanJob = vi.fn();
+    const reservation = {
+      ...system('reservations', 'reservation-1'),
+      packageId: pkg.$id,
+      version: version.version,
+      userId: owner.$id,
+      stagingKey: scanning.stagingKey,
+      status: 'scanning',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    };
     mocks.repo = {
       scanJobs: { getOrNull: vi.fn().mockResolvedValue(job) },
-      versions: { getOrNull: vi.fn().mockResolvedValue(scanning), update: vi.fn() },
+      versions: { getOrNull: vi.fn().mockResolvedValue(scanning), update: updateVersion },
       packages: { getOrNull: vi.fn().mockResolvedValue(pkg) },
       users: { getOrNull: vi.fn().mockResolvedValue(owner) },
-      getReservation: vi.fn().mockResolvedValue(null),
+      reservations: { update: updateReservation },
+      getReservation: vi.fn().mockResolvedValue(reservation),
       getUserByNamespace: vi.fn().mockResolvedValue(owner),
       getForeignPackageOwner: vi.fn().mockResolvedValue(null),
+      failScanJob,
     };
     mocks.refreshPublisher.mockResolvedValue(owner);
     const manifestSha256 = await sha256Hex(
@@ -415,6 +433,69 @@ describe('paid private package routes', () => {
     expect(response.status).toBe(402);
     expect(bucket.head).not.toHaveBeenCalled();
     expect(bucket.put).not.toHaveBeenCalled();
-    expect(mocks.repo.versions.update).not.toHaveBeenCalled();
+    expect(failScanJob).toHaveBeenCalledWith(job.$id, 1, 'private_entitlement_lapsed', null);
+    expect(updateVersion).toHaveBeenCalledWith(version.$id, {
+      status: 'failed',
+      scanError: 'private_entitlement_lapsed',
+    });
+    expect(updateReservation).toHaveBeenCalledWith(reservation.$id, { status: 'failed' });
+  });
+
+  it('keeps lapsed private account inventory name-only', async () => {
+    const store = kv();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 404 })),
+    );
+    const listVersions = vi.fn();
+    mocks.repo = {
+      listPackagesByOwner: vi.fn().mockResolvedValue({ total: 1, rows: [pkg] }),
+      listVersions,
+    };
+
+    const response = await app().request(
+      'https://registry.test/v1/account/packages',
+      { headers: { authorization: 'Bearer token' } },
+      testEnv(store.binding),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      packages: [{ name: pkg.name }],
+    });
+    expect(listVersions).not.toHaveBeenCalled();
+  });
+
+  it('returns full private account inventory only with a current paid entitlement', async () => {
+    const store = kv();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(paidSubscription())),
+    );
+    const listVersions = vi.fn().mockResolvedValue({ total: 1, rows: [version] });
+    mocks.repo = {
+      listPackagesByOwner: vi.fn().mockResolvedValue({ total: 1, rows: [pkg] }),
+      listVersions,
+    };
+
+    const response = await app().request(
+      'https://registry.test/v1/account/packages',
+      { headers: { authorization: 'Bearer token' } },
+      testEnv(store.binding),
+    );
+    const body = (await response.json()) as { packages: Array<Record<string, unknown>> };
+
+    expect(response.status).toBe(200);
+    expect(body.packages[0]).toMatchObject({
+      id: pkg.$id,
+      name: pkg.name,
+      visibility: 'private',
+      restricted: false,
+      latestVersion: pkg.latestVersion,
+      versionCount: pkg.publishedVersionCount,
+      storageBytes: pkg.storageBytes,
+      versions: [expect.objectContaining({ version: version.version })],
+    });
+    expect(listVersions).toHaveBeenCalledWith(pkg.$id, expect.objectContaining({ total: false }));
   });
 });

@@ -1482,6 +1482,13 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
       isPrivatePackage(pkg) &&
       !(await hasPaidPrivatePackageEntitlement(c.env, config, publisher.clerkId))
     ) {
+      const failureCode = 'private_entitlement_lapsed';
+      await repo.failScanJob(job.$id, Math.max(job.attempts, 1), failureCode, null);
+      await repo.versions.update(version.$id, {
+        status: 'failed',
+        scanError: failureCode,
+      });
+      if (reservation) await repo.reservations.update(reservation.$id, { status: 'failed' });
       throw new LemonizeError(
         402,
         ErrorCodes.PAYMENT_REQUIRED,

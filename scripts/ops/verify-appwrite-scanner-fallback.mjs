@@ -85,6 +85,7 @@ export function isExactArtifactHandoffFailure(value) {
   const payload = requireObject(value, 'Deployment');
   if (typeof payload.buildLogs !== 'string') return false;
   const lines = payload.buildLogs
+    // eslint-disable-next-line no-control-regex -- Appwrite build logs can contain ANSI SGR sequences.
     .replace(/\u001b\[[0-9;]*m/g, '')
     .split(/\r?\n/)
     .map((line) => line.trim())

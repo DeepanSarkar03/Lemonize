@@ -57,7 +57,8 @@ interface AccountResponse {
   };
 }
 
-interface AccountPackage {
+interface FullAccountPackage {
+  restricted: false;
   id: string;
   name: string;
   status: string;
@@ -75,6 +76,12 @@ interface AccountPackage {
     updatedAt: string;
   }>;
 }
+
+interface RestrictedAccountPackage {
+  name: string;
+}
+
+type AccountPackage = FullAccountPackage | RestrictedAccountPackage;
 
 interface UsageResponse {
   usage: {
@@ -506,6 +513,26 @@ export function DashboardClient() {
           ) : (
             <ul className="divide-y divide-line">
               {snapshot.packages.map((pkg) => {
+                if (!('id' in pkg)) {
+                  return (
+                    <li key={pkg.name} className="px-6 py-5">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="font-mono text-sm font-medium text-ink-900">{pkg.name}</p>
+                          <p className="mt-1 text-sm text-ink-600">
+                            Renew private-package access to view versions and package metadata.
+                          </p>
+                        </div>
+                        <Link
+                          href="/pricing"
+                          className="inline-flex h-9 items-center justify-center rounded-lg border border-line px-3 text-sm font-medium text-ink-900 transition-colors hover:bg-paper"
+                        >
+                          View plans
+                        </Link>
+                      </div>
+                    </li>
+                  );
+                }
                 const latestActivity = pkg.versions[0];
                 return (
                   <li key={pkg.id} className="group px-6 py-5 transition-colors hover:bg-paper/70">

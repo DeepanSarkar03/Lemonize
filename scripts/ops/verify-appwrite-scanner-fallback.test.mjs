@@ -323,7 +323,10 @@ test('proves the hidden signing secret through a side-effect-free active executi
     new Date('2026-07-29T00:00:00.000Z'),
   );
   assert.equal(headers['x-lemonize-timestamp'], '1785283200');
-  assert.match(headers['x-lemonize-signature'], /^v1=[a-f0-9]{64}$/);
+  assert.equal(
+    headers['x-lemonize-signature'],
+    'v1=955f0c9ccb11fadebf8887c2c0a840efacf8885b521907b7d283ab61aaf9029c',
+  );
 
   const execution = {
     status: 'completed',
