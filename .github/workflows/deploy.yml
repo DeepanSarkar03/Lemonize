@@ -292,6 +292,23 @@ jobs:
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
           echo "url=$WEB_BASE_URL" >> "$GITHUB_OUTPUT"
 
+      - name: Verify Clerk and deployed web configuration
+        env:
+          DEPLOY_ENV: ${{ inputs.environment }}
+          CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
+          WEB_BASE_URL: ${{ vars.WEB_BASE_URL }}
+        run: |
+          bash scripts/ops/require-env.sh DEPLOY_ENV CLERK_ISSUER WEB_BASE_URL
+          if [[ "$DEPLOY_ENV" == production ]]; then
+            definition=infrastructure/clerk/production.json
+            instance_environment=production
+          else
+            definition=infrastructure/clerk/development.json
+            instance_environment=development
+          fi
+          node scripts/ops/verify-clerk-public-config.mjs \
+            "$definition" "$CLERK_ISSUER" "$WEB_BASE_URL" "$instance_environment"
+
       - name: Smoke test deployed registry and web
         env:
           REGISTRY_SMOKE_URL: ${{ vars.REGISTRY_BASE_URL }}

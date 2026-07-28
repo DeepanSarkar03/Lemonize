@@ -31,7 +31,7 @@ export default function LoginPage() {
         <div className="mt-10 grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-white/10 text-xs">
           <div className="bg-white/[0.04] p-4">
             <p className="technical-label text-pulp/45">Session</p>
-            <p className="mt-2 text-pulp/75">Passkey + GitHub</p>
+            <p className="mt-2 text-pulp/75">GitHub OAuth</p>
           </div>
           <div className="bg-white/[0.04] p-4">
             <p className="technical-label text-pulp/45">Tokens</p>

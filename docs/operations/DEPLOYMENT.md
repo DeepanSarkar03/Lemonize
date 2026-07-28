@@ -29,7 +29,7 @@ No D1 resource belongs in this matrix. D1 is a frozen migration source only.
 
 ## Protected configuration
 
-Configure the following independently on the staging and production GitHub environments unless a value is explicitly marked staging-only. A missing required value is a hard failure; `ADMIN_CLERK_IDS` may be intentionally empty.
+Configure the following independently on the staging and production GitHub environments unless a value is explicitly marked staging-only. A missing required value is a hard failure. Keep `ADMIN_CLERK_IDS` empty only during initial provisioning; every deployable environment must have at least one verified, immutable Clerk `user_...` subject before it is considered operationally ready.
 
 | Kind     | Name                                                                     | Purpose                                                                                              |
 | -------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
@@ -53,7 +53,7 @@ Configure the following independently on the staging and production GitHub envir
 | Variable | `MAX_GLOBAL_ARTIFACT_BYTES`                                              | Serialized total published-and-reserved ceiling; <=70% of lower storage entitlement and <=7 GiB      |
 | Variable | `RATE_LIMIT_READS_PER_MINUTE`, `RATE_LIMIT_WRITES_PER_MINUTE`            | Positive integer rate limits                                                                         |
 | Variable | `ADMIN_CLERK_IDS`, `REGISTRY_MODE`                                       | Immutable Clerk-subject administrators and public/read-only policy                                   |
-| Variable | `PACKAGE_SCOPE_GRANTS_JSON`                                               | Required strict package-scope grant array keyed to immutable GitHub external IDs; use explicit `[]`  |
+| Variable | `PACKAGE_SCOPE_GRANTS_JSON`                                              | Required strict package-scope grant array keyed to immutable GitHub external IDs; use explicit `[]`  |
 | Variable | `NPM_PROXY_BASE_URL`                                                     | Exact environment npm-proxy origin used by deployment smoke tests                                    |
 | Variable | `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`                                     | Exact Vercel project linkage                                                                         |
 | Variable | `APPWRITE_ENDPOINT`, `APPWRITE_PROJECT_ID`, `APPWRITE_DATABASE_ID`       | Exact Appwrite endpoint/project/TablesDB linkage                                                     |
