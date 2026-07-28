@@ -9,11 +9,7 @@ import {
   validatePackageName,
 } from '@lemonize/shared';
 import type { AppBindings } from '../lib/env.js';
-import type {
-  AppwriteRow,
-  PackageData,
-  VersionData,
-} from '../lib/appwrite-types.js';
+import type { AppwriteRow, PackageData, VersionData } from '../lib/appwrite-types.js';
 import type { RegistryAppwriteRepository } from '../lib/appwrite-repository.js';
 import { AppwriteQuery } from '../lib/appwrite.js';
 import { requireAuth, requireClerkSession, requireReader } from '../lib/auth.js';
@@ -22,6 +18,8 @@ import { publisherQuotaUsage } from '../lib/publisher-usage.js';
 import { PUBLISH_QUOTAS, artifactPromotionEnabled } from '../lib/publish-security.js';
 import { CURRENT_TERMS_VERSION, hasCurrentTerms } from '../lib/account-policy.js';
 import { rateLimit } from '../lib/ratelimit.js';
+import { hasPaidPrivatePackageEntitlement, packageVisibility } from '../lib/private-packages.js';
+import { requirePackageReadAccess } from '../lib/package-access.js';
 
 export const account = new Hono<AppBindings>();
 
@@ -53,6 +51,7 @@ function packageWire(pkg: AppwriteRow<PackageData>) {
     id: pkg.$id,
     name: pkg.name,
     status: pkg.status,
+    visibility: packageVisibility(pkg),
     description: pkg.description ?? null,
     latestVersion: pkg.latestVersion ?? null,
     versionCount: pkg.publishedVersionCount ?? 0,
@@ -105,7 +104,7 @@ async function statusPayload(
         ? 'yanked'
         : version.status === 'blocked'
           ? 'blocked'
-          : job?.status ?? reservation?.status ?? version.status;
+          : (job?.status ?? reservation?.status ?? version.status);
   return {
     package: pkg.name,
     packageId: pkg.$id,
@@ -131,8 +130,20 @@ account.get('/account', requireAuth, requireReader, async (c) => {
   const user = await registryRepository(c.env).users.getOrNull(c.get('userId')!);
   if (!user) throw unauthorized();
   const termsCurrent = hasCurrentTerms(user);
-  const eligible =
-    termsCurrent && (user.role === 'publisher' || user.role === 'admin');
+  const eligible = termsCurrent && (user.role === 'publisher' || user.role === 'admin');
+  let privatePackagesEntitled = false;
+  let privatePackagesEntitlementAvailable = true;
+  if (c.get('config').allowPrivatePackages) {
+    try {
+      privatePackagesEntitled = await hasPaidPrivatePackageEntitlement(
+        c.env,
+        c.get('config'),
+        user.clerkId,
+      );
+    } catch {
+      privatePackagesEntitlementAvailable = false;
+    }
+  }
   noStore(c);
   return c.json({
     account: {
@@ -156,7 +167,13 @@ account.get('/account', requireAuth, requireReader, async (c) => {
       eligible,
       enabled: eligible && artifactPromotionEnabled(c.get('config')),
       registryMode: c.get('config').registryMode,
-      requiresGithub: user.role !== 'admin',
+      requiresGithub: false,
+    },
+    privatePackages: {
+      enabled: c.get('config').allowPrivatePackages,
+      paidOnly: true,
+      entitled: privatePackagesEntitled,
+      entitlementAvailable: privatePackagesEntitlementAvailable,
     },
   });
 });
@@ -177,15 +194,17 @@ account.post('/account/terms', requireAuth, requireClerkSession, async (c) => {
     acceptedTermsAt: acceptedAt,
     acceptedTermsVersion: CURRENT_TERMS_VERSION,
   });
-  await repo.appendAudit({
-    actorId: user.$id,
-    action: 'terms.accept',
-    resourceType: 'account',
-    resourceId: user.$id,
-    detail: CURRENT_TERMS_VERSION,
-    requestId: c.get('requestId'),
-    ipHash: null,
-  }).catch(() => undefined);
+  await repo
+    .appendAudit({
+      actorId: user.$id,
+      action: 'terms.accept',
+      resourceType: 'account',
+      resourceId: user.$id,
+      detail: CURRENT_TERMS_VERSION,
+      requestId: c.get('requestId'),
+      ipHash: null,
+    })
+    .catch(() => undefined);
   noStore(c);
   return c.json({ version: CURRENT_TERMS_VERSION, acceptedAt });
 });
@@ -216,11 +235,14 @@ account.get('/account/usage', requireAuth, requireReader, async (c) => {
   const repo = registryRepository(c.env);
   const usage = await publisherQuotaUsage(repo, c.get('userId')!);
   const versionCounts = await Promise.all(
-    usage.packages.map(async (pkg) =>
-      (await repo.listVersions(pkg.$id, {
-        total: false,
-        queries: [AppwriteQuery.limit(PUBLISH_QUOTAS.maxVersionsPerPackage + 1)],
-      })).rows.length,
+    usage.packages.map(
+      async (pkg) =>
+        (
+          await repo.listVersions(pkg.$id, {
+            total: false,
+            queries: [AppwriteQuery.limit(PUBLISH_QUOTAS.maxVersionsPerPackage + 1)],
+          })
+        ).rows.length,
     ),
   );
   noStore(c);
@@ -315,7 +337,10 @@ account.post('/reports', requireAuth, async (c) => {
   }
   const detail = detailValue.trim();
   if (detail.length > 2_000) throw badRequest('detail must be at most 2000 characters.');
-  if (versionValue !== undefined && (typeof versionValue !== 'string' || !isValidVersion(versionValue))) {
+  if (
+    versionValue !== undefined &&
+    (typeof versionValue !== 'string' || !isValidVersion(versionValue))
+  ) {
     throw badRequest('version must be a valid semantic version.');
   }
 
@@ -324,6 +349,7 @@ account.post('/reports', requireAuth, async (c) => {
   if (!pkg || pkg.status === 'deleted') {
     throw notFound(ErrorCodes.PACKAGE_NOT_FOUND, 'Package was not found.');
   }
+  await requirePackageReadAccess(c, pkg);
   if (typeof versionValue === 'string') {
     const version = await repo.getVersion(pkg.$id, versionValue);
     if (
@@ -343,15 +369,17 @@ account.post('/reports', requireAuth, async (c) => {
     resolvedBy: null,
     resolvedAt: null,
   });
-  await repo.appendAudit({
-    actorId: c.get('userId')!,
-    action: 'report.create',
-    resourceType: 'report',
-    resourceId: report.$id,
-    detail: `${pkg.name}${versionValue ? `@${versionValue}` : ''}: ${reasonValue}`,
-    requestId: c.get('requestId'),
-    ipHash: null,
-  }).catch(() => undefined);
+  await repo
+    .appendAudit({
+      actorId: c.get('userId')!,
+      action: 'report.create',
+      resourceType: 'report',
+      resourceId: report.$id,
+      detail: `${pkg.name}${versionValue ? `@${versionValue}` : ''}: ${reasonValue}`,
+      requestId: c.get('requestId'),
+      ipHash: null,
+    })
+    .catch(() => undefined);
   noStore(c);
   return c.json({ id: report.$id, status: report.status }, 201);
 });

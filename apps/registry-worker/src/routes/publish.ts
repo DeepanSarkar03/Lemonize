@@ -53,6 +53,12 @@ import {
 } from '../lib/publish-security.js';
 import { appwriteApiBaseUrl } from '../lib/url.js';
 import { authorizedPackageScopes } from '../lib/package-scope-grants.js';
+import {
+  hasPaidPrivatePackageEntitlement,
+  isPrivatePackage,
+  packageVisibility,
+  requirePaidPrivatePackageEntitlement,
+} from '../lib/private-packages.js';
 
 export const publish = new Hono<AppBindings>();
 /** Mounted at `/`, not `/v1`, so the Appwrite scanner has a stable private protocol path. */
@@ -196,6 +202,7 @@ async function findOrCreatePackage(
     normalizedName: string;
     scope: string;
     userId: string;
+    visibility: 'public' | 'private';
     description?: string | null;
   },
 ): Promise<AppwriteRow<PackageData>> {
@@ -203,6 +210,12 @@ async function findOrCreatePackage(
   if (found) {
     requireOwnedPackage(c, found);
     if (found.status !== 'active') throw forbidden('This package is not active.');
+    if (packageVisibility(found) !== input.visibility) {
+      throw conflict(
+        ErrorCodes.CONFLICT,
+        `Package ${found.name} is already ${packageVisibility(found)} and its visibility cannot be changed.`,
+      );
+    }
     return found;
   }
 
@@ -212,6 +225,7 @@ async function findOrCreatePackage(
       normalizedName: input.normalizedName,
       scope: input.scope,
       ownerId: input.userId,
+      visibility: input.visibility,
       description: input.description ?? null,
       readme: null,
       status: 'active',
@@ -232,6 +246,12 @@ async function findOrCreatePackage(
     if (!raced) throw error;
     requireOwnedPackage(c, raced);
     if (raced.status !== 'active') throw forbidden('This package is not active.');
+    if (packageVisibility(raced) !== input.visibility) {
+      throw conflict(
+        ErrorCodes.CONFLICT,
+        `Package ${raced.name} is already ${packageVisibility(raced)} and its visibility cannot be changed.`,
+      );
+    }
     return raced;
   }
 }
@@ -744,13 +764,7 @@ publish.post('/packages', requireAuth, requirePublisher, async (c) => {
     packageScope: check.parsed.scope,
     tokenScopes: c.get('tokenScopes'),
   });
-  if (body.visibility === 'private') {
-    throw new LemonizeError(
-      403,
-      ErrorCodes.FEATURE_DISABLED,
-      'Private packages are not enabled on this registry.',
-    );
-  }
+  if (body.visibility === 'private') await requirePaidPrivatePackageEntitlement(c);
   const { userId } = actor(c);
   const repo = registryRepository(c.env);
   await requireExclusivePackageScope(repo, check.parsed.scope!, userId);
@@ -772,10 +786,11 @@ publish.post('/packages', requireAuth, requirePublisher, async (c) => {
       normalizedName,
       scope: check.parsed.scope!,
       userId,
+      visibility: body.visibility,
       description: body.description ?? null,
     });
     await repo.users.update(userId, { packageCount: usage.packages.length + 1 });
-    return c.json({ id: pkg.$id, name: pkg.name, visibility: 'public' }, 201);
+    return c.json({ id: pkg.$id, name: pkg.name, visibility: packageVisibility(pkg) }, 201);
   } finally {
     await c.env.BUCKET.delete(quotaLock).catch(() => undefined);
   }
@@ -816,9 +831,7 @@ publish.post('/packages/:name/versions', requireAuth, requirePublisher, async (c
   const tag = intent.tag ?? intent.manifest.lemonize?.tag ?? 'latest';
   if (!DIST_TAG.test(tag)) throw badRequest('Invalid distribution tag.');
   const access = intent.access ?? intent.manifest.lemonize?.access ?? 'public';
-  if (access !== 'public') {
-    throw new LemonizeError(403, ErrorCodes.FEATURE_DISABLED, 'Private packages are not enabled.');
-  }
+  if (access === 'private') await requirePaidPrivatePackageEntitlement(c);
   const manifest = JSON.stringify(intent.manifest);
   if (new TextEncoder().encode(manifest).byteLength > 256 * 1024) {
     throw tooLarge('Manifest exceeds 256 KiB.');
@@ -854,6 +867,7 @@ publish.post('/packages/:name/versions', requireAuth, requirePublisher, async (c
       normalizedName,
       scope: check.parsed.scope!,
       userId,
+      visibility: access,
       description: intent.manifest.description ?? null,
     });
     if (!ownedPackage) {
@@ -1094,6 +1108,7 @@ publish.post(
       packageScope: pkg.scope,
       tokenScopes: c.get('tokenScopes'),
     });
+    if (isPrivatePackage(pkg)) await requirePaidPrivatePackageEntitlement(c);
     await requireExclusivePackageScope(repo, pkg.scope, userId);
     const version = await repo.getVersion(pkg.$id, reservation.version);
     if (!version || version.stagingKey !== reservation.stagingKey) {
@@ -1463,6 +1478,16 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
       packageStatus: pkg.status,
     });
     await requireExclusivePackageScope(repo, pkg.scope, publisher.$id);
+    if (
+      isPrivatePackage(pkg) &&
+      !(await hasPaidPrivatePackageEntitlement(c.env, config, publisher.clerkId))
+    ) {
+      throw new LemonizeError(
+        402,
+        ErrorCodes.PAYMENT_REQUIRED,
+        'The publisher no longer has paid private-package access.',
+      );
+    }
   }
 
   const artifactKey = `artifacts/${pkg.$id}/${version.$id}/${version.shasum}.tgz`;
@@ -1478,7 +1503,9 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
       onlyIf: { etagDoesNotMatch: '*' },
       httpMetadata: {
         contentType: 'application/gzip',
-        cacheControl: 'public, max-age=31536000, immutable',
+        cacheControl: isPrivatePackage(pkg)
+          ? 'private, no-store'
+          : 'public, max-age=31536000, immutable',
       },
       customMetadata: {
         versionId: version.$id,
@@ -1522,11 +1549,19 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
     await repo.setTag({ packageId: pkg.$id, tag: version.tag, version: version.version });
   }
   await refreshPackageMetadata(repo, pkg, version);
-  c.executionCtx.waitUntil(
-    c.env.KV.put(kvKeys.publicVersion(pkg.normalizedName, version.version), '1', {
-      expirationTtl: 60,
-    }).catch(() => undefined),
-  );
+  if (isPrivatePackage(pkg)) {
+    c.executionCtx.waitUntil(
+      c.env.KV.delete(kvKeys.publicVersion(pkg.normalizedName, version.version)).catch(
+        () => undefined,
+      ),
+    );
+  } else {
+    c.executionCtx.waitUntil(
+      c.env.KV.put(kvKeys.publicVersion(pkg.normalizedName, version.version), '1', {
+        expirationTtl: 60,
+      }).catch(() => undefined),
+    );
+  }
   if (reservation) await repo.reservations.update(reservation.$id, { status: 'completed' });
   await repo.completeScanJob(job.$id, result);
   if (version.stagingKey) await c.env.BUCKET.delete(version.stagingKey).catch(() => undefined);

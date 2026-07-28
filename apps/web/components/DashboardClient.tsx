@@ -49,12 +49,19 @@ interface AccountResponse {
     registryMode: string;
     requiresGithub: boolean;
   };
+  privatePackages: {
+    enabled: boolean;
+    paidOnly: boolean;
+    entitled: boolean;
+    entitlementAvailable: boolean;
+  };
 }
 
 interface AccountPackage {
   id: string;
   name: string;
   status: string;
+  visibility: 'public' | 'private';
   description: string | null;
   latestVersion: string | null;
   versionCount: number;
@@ -350,7 +357,7 @@ export function DashboardClient() {
     );
   }
 
-  const { account, publishing, terms } = snapshot.account;
+  const { account, publishing, terms, privatePackages } = snapshot.account;
   const { usage, limits } = snapshot.usage;
 
   return (
@@ -421,11 +428,9 @@ export function DashboardClient() {
           <WarningCircle className="mt-0.5 shrink-0" size={17} weight="bold" />
           <div>
             <p className="font-semibold">
-              {!account.githubLinked
-                ? 'Connect GitHub to become a publisher.'
-                : publishing.registryMode === 'read_only'
-                  ? 'The registry is currently read-only.'
-                  : 'Publishing is not enabled for this account.'}
+              {publishing.registryMode === 'read_only'
+                ? 'The registry is currently read-only.'
+                : 'Publishing is not enabled for this account.'}
             </p>
             <p className="mt-1 opacity-80">
               Public installs and your existing package history remain available.
@@ -433,6 +438,26 @@ export function DashboardClient() {
           </div>
         </section>
       ) : null}
+
+      <section className="flex flex-col gap-4 rounded-xl border border-line bg-surface px-5 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="font-semibold text-ink-900">
+            {privatePackages.entitled
+              ? 'Private packages are included in your plan.'
+              : 'Public packages are free. Private packages require a paid plan.'}
+          </p>
+          <p className="mt-1 text-ink-600">
+            {privatePackages.enabled
+              ? privatePackages.entitlementAvailable
+                ? 'Private package access is checked against your current Clerk subscription.'
+                : 'Billing status is temporarily unavailable; private access fails closed.'
+              : 'Private publishing remains unavailable until the paid-plan launch gate is enabled.'}
+          </p>
+        </div>
+        <Link className="btn shrink-0 justify-center" href="/pricing">
+          {privatePackages.entitled ? 'Manage plan' : 'View pricing'}
+        </Link>
+      </section>
 
       {message ? (
         <p
@@ -497,6 +522,9 @@ export function DashboardClient() {
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-3 text-xs">
+                        <span className="rounded-md bg-paper px-2 py-1 font-mono text-[10px] text-ink-600">
+                          {pkg.visibility}
+                        </span>
                         <span className="tnum font-mono text-ink-600">
                           {bytes(pkg.storageBytes)}
                         </span>
@@ -707,7 +735,7 @@ export function DashboardClient() {
           <GithubLogo size={20} weight="bold" className="text-ink-600" />
           <div>
             <p className="font-medium text-ink-900">
-              {account.githubLinked ? 'GitHub identity linked' : 'GitHub identity required'}
+              {account.githubLinked ? 'GitHub identity linked' : 'GitHub identity optional'}
             </p>
             <p className="mt-0.5 text-xs text-ink-600">
               Your namespace stays @{account.namespace} if your username changes.

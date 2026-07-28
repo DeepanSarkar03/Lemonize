@@ -53,22 +53,22 @@ Full responses can use the Worker cache. Range responses stream from R2 and retu
 
 ## Authentication and API tokens
 
-| Method   | Path                      | Auth                 | Description                                                                                                                                 |
-| -------- | ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST`   | `/v1/auth/device/start`   | Public               | Creates a timestamped, HMAC-authenticated device secret/display code with a server-enforced 10-minute lifetime and returns `/login`         |
-| `POST`   | `/v1/auth/device/approve` | Valid Clerk session  | The signed-in user manually submits the display code; the Worker verifies the unexpired Clerk JWT and active account before issuing a token |
-| `POST`   | `/v1/auth/device/poll`    | Signed device secret | Verifies signature/expiry and returns `pending`, or atomically consumes the 120-second Durable Object approval and returns its token        |
-| `GET`    | `/v1/auth/me`             | Clerk or API token   | Returns the current Lemonize user                                                                                                           |
-| `POST`   | `/v1/auth/logout`         | Clerk or API token   | Revokes the presenting API token and its direct children when it is a root; a Clerk-session request does not terminate Clerk itself        |
+| Method   | Path                      | Auth                 | Description                                                                                                                                           |
+| -------- | ------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/v1/auth/device/start`   | Public               | Creates a timestamped, HMAC-authenticated device secret/display code with a server-enforced 10-minute lifetime and returns `/login`                   |
+| `POST`   | `/v1/auth/device/approve` | Valid Clerk session  | The signed-in user manually submits the display code; the Worker verifies the unexpired Clerk JWT and active account before issuing a token           |
+| `POST`   | `/v1/auth/device/poll`    | Signed device secret | Verifies signature/expiry and returns `pending`, or atomically consumes the 120-second Durable Object approval and returns its token                  |
+| `GET`    | `/v1/auth/me`             | Clerk or API token   | Returns the current Lemonize user                                                                                                                     |
+| `POST`   | `/v1/auth/logout`         | Clerk or API token   | Revokes the presenting API token and its direct children when it is a root; a Clerk-session request does not terminate Clerk itself                   |
 | `POST`   | `/v1/tokens`              | `manage:tokens`      | Creates a 1-90 day token and returns the raw value once; API-created children cannot receive `manage:tokens`, exceed the root's scopes, or outlive it |
-| `GET`    | `/v1/tokens`              | `manage:tokens`      | Lists active metadata/prefixes; an API root sees only itself and its children, while a Clerk session sees every account token               |
-| `DELETE` | `/v1/tokens/:id`          | `manage:tokens`      | Revokes a token; an API root is confined to itself and its direct children, while a Clerk session can revoke any account token              |
-| `DELETE` | `/v1/tokens`              | Valid Clerk session  | Revokes all active tokens owned by the account                                                                                              |
-| `POST`   | `/v1/tokens/revoke-all`   | Valid Clerk session  | Compatibility form of revoke-all                                                                                                            |
+| `GET`    | `/v1/tokens`              | `manage:tokens`      | Lists active metadata/prefixes; an API root sees only itself and its children, while a Clerk session sees every account token                         |
+| `DELETE` | `/v1/tokens/:id`          | `manage:tokens`      | Revokes a token; an API root is confined to itself and its direct children, while a Clerk session can revoke any account token                        |
+| `DELETE` | `/v1/tokens`              | Valid Clerk session  | Revokes all active tokens owned by the account                                                                                                        |
+| `POST`   | `/v1/tokens/revoke-all`   | Valid Clerk session  | Compatibility form of revoke-all                                                                                                                      |
 
-Supported API-token scopes are `read`, `publish`, `manage:packages`, and `manage:tokens`. A device token lasts 30 days. Consumers receive `read` and `manage:tokens`; GitHub-linked publishers/admins receive all four scopes. These Clerk/device-issued credentials are roots. An API-created child never receives `manage:tokens`, and every request made with it revalidates the active root, so revoking or expiring the root invalidates the child. `read` is reserved/descriptive today; token authentication validates the stored scope set, while only publish/manage routes enforce a capability scope.
+Supported API-token scopes are `read`, `publish`, `manage:packages`, and `manage:tokens`. A device token lasts 30 days. In public mode, active accounts and administrators receive all four scopes; invite-only consumers receive `read` and `manage:tokens`. These Clerk/device-issued credentials are roots. An API-created child never receives `manage:tokens`, and every request made with it revalidates the active root, so revoking or expiring the root invalidates the child. Private metadata and artifacts require the `read` scope in addition to ownership and a current paid entitlement.
 
-In public mode, publisher eligibility comes from a stable GitHub external ID returned by Clerk, not an email, username supplied by a client, or mutable GitHub username. `ADMIN_CLERK_IDS` grants administrator role by immutable Clerk subject. New accounts enter the current Clerk legal-consent flow; existing accounts must accept the exact current terms version through a Clerk browser session before publishing.
+In public mode, every active Clerk account is publisher-eligible. Identity and the default namespace come from the verified immutable Clerk subject; email, CLI input, and mutable usernames never grant authority. `ADMIN_CLERK_IDS` grants administrator role by immutable Clerk subject. New accounts enter the current Clerk legal-consent flow; existing accounts must accept the exact current terms version through a Clerk browser session before publishing.
 
 An environment may additionally map one canonical package scope to one stable GitHub external ID with the required `PACKAGE_SCOPE_GRANTS_JSON` array (`[]` means none). This server-side package authorization is distinct from API-token capability scopes and does not rename the account namespace or bypass package ownership. API-token identities matching a grant reconcile their Clerk GitHub link at least every 60 seconds through a separate cache, and publish finalization rechecks current grant authorization.
 
@@ -96,7 +96,9 @@ All responses below are authenticated and `private, no-store`:
 | `PUT`  | `/v1/uploads/:reservationId`                    | Upload capability                         | Streams the exact declared byte count into a random private R2 staging key                       |
 | `POST` | `/v1/packages/:name/versions/:version/finalize` | Publisher + `publish` + upload capability | Verifies the staged object and queues scanning; normally returns `202` with `status: "scanning"` |
 
-Publishing also requires `REGISTRY_MODE=public`, `ALLOW_PUBLIC_PUBLISH=true`, current terms, an active publisher/admin role, ownership, and an `@namespace/name` matching the caller's immutable Lemonize namespace or exact server-side package-scope grant. Public publishers must have a linked GitHub identity. Private package publication is disabled.
+Publishing also requires `REGISTRY_MODE=public`, `ALLOW_PUBLIC_PUBLISH=true`, current terms, an active publisher/admin role, ownership, and an `@namespace/name` matching the caller's immutable Lemonize namespace or exact server-side package-scope grant. Public is the default access. Private creation and publication additionally require `ALLOW_PRIVATE_PACKAGES=true` and an active, non-free Clerk Billing plan containing the configured `CLERK_PRIVATE_PACKAGES_FEATURE`. Private metadata and tarballs are owner-only, `private, no-store`, never written to shared KV/Cache API, and recheck the server-side entitlement with at most 30 seconds of positive-cache lag.
+
+The authenticated `/v1/account/packages` inventory continues to show a lapsed owner's own private package names so the dashboard can explain what requires renewal; it does not expose version metadata or artifact bytes. Owner metadata/tarball reads return `PAYMENT_REQUIRED` until entitlement is restored, while every non-owner private read is hidden as `PACKAGE_NOT_FOUND`.
 
 The public-beta account limits are five packages, twenty versions per package, two concurrent reservations, 10 MiB per artifact, and 100 MiB published plus reserved bytes. A serialized global gate also rejects a reservation that would exceed `MAX_GLOBAL_ARTIFACT_BYTES`; its checked-in value is 1 GiB until verified storage entitlements justify a value no greater than 70% of the lower R2/Appwrite allowance and never above 7 GiB.
 
@@ -134,7 +136,7 @@ Legacy unscoped packages are publisher-read-only. New unscoped versions are reje
 
 Important non-secret variables:
 
-- policy: `REGISTRY_MODE`, `ALLOW_PUBLIC_PUBLISH`, `ALLOW_PRIVATE_PACKAGES`, `ADMIN_CLERK_IDS`;
+- policy: `REGISTRY_MODE`, `ALLOW_PUBLIC_PUBLISH`, `ALLOW_PRIVATE_PACKAGES`, `CLERK_PRIVATE_PACKAGES_FEATURE`, `ADMIN_CLERK_IDS`;
 - limits: `MAX_TARBALL_SIZE_BYTES`, `MAX_UNPACKED_SIZE_BYTES`, `MAX_PACKAGE_FILES`, serialized `MAX_GLOBAL_ARTIFACT_BYTES`, and read/write rate limits;
 - public origins: `REGISTRY_BASE_URL`, `WEB_BASE_URL`, `CORS_ALLOWED_ORIGINS`;
 - Appwrite: endpoint, project, TablesDB ID, quarantine bucket, scanner function;

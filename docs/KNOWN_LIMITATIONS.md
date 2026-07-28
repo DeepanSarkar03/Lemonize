@@ -7,10 +7,10 @@ Production is deliberately in read-only cutover mode. These limitations are oper
 | Blocker                                                   | Impact                                                                                                                                                                                                                  | Exit condition                                                                                                                         |
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Production Clerk interactive launch drills are incomplete | Custom domains, TLS/JWKS, mail DNS, public GitHub OAuth, immutable administrator IDs, and public-policy drift checks are configured, but delivery, callback handling, and the full publisher path are not launch-proven | Test email delivery, first-user GitHub login and callback, lockout, linking, terms acceptance, active-user lookup, and device approval |
-| Appwrite cannot currently build the artifact scanner      | The Frankfurt build service reports success but produces no output artifact; read-only deploys are safe, but no mutable registry mode may be enabled                                                                    | Restore Appwrite function artifact output, then pass clean and rejected archive scans in staging before any write-enabled deploy       |
+| Appwrite scanner builds can fail during artifact handoff  | The Frankfurt build service can report `Build produced no output artifact.` after a successful build; deploys fail closed unless the pinned active deployment is byte-identical to the candidate                        | Keep the guarded fallback pin current, and remove it after Appwrite restores reliable function artifact output                         |
 | Production has no independent deployment approver         | Self-review is correctly disabled, and the sole current reviewer cannot approve their own protected production deployment                                                                                               | Add a second trusted repository/environment reviewer and complete one exact-SHA production approval drill                              |
 | npm trusted publishing is not configured                  | `@lemonize/cli@0.1.0` is public; a fresh, provenance-enabled `0.1.4` release is prepared but must not be tagged until npm's OIDC binding is verified                                                                    | Bind `DeepanSarkar03/Lemonize`, `release-cli.yml`, and secret-free environment `npm-release` as the package's trusted publisher        |
-| End-to-end launch drills are incomplete                   | Read-only production health and the non-production restore drill pass, but authentication, device approval, publishing, scanner rejection, and emergency blocking are not launch-proven together                        | Pass the complete GitHub-linked staging auth/terms/device/publish/rejection/block matrix after scanner recovery                        |
+| End-to-end launch drills are incomplete                   | Read-only production health and the non-production restore drill pass, but authentication, device approval, publishing, scanner rejection, and emergency blocking are not launch-proven together                        | Pass the complete staging auth/terms/device/public/private-publish/rejection/block matrix after scanner recovery                       |
 
 Production stays `REGISTRY_MODE=read_only` with `ALLOW_PUBLIC_PUBLISH=false` until these blockers and the migration/restore/scanner gates are closed.
 
@@ -20,7 +20,7 @@ The former D1 database is a one-time migration source, not a live runtime depend
 
 Migrated accounts use legacy identity placeholders until an operator reconciles them to a real Clerk/GitHub identity. Before write cutover, reconcile every owned package to a stable Clerk subject and GitHub external ID, record exceptions, and leave unresolved owners frozen. Put the legacy registry into enforced read-only mode before the final export so a new token or write cannot race the snapshot.
 
-Public publisher eligibility requires a GitHub external ID returned by Clerk. Email and GitHub username are profile data, not publisher authority; administrators are identified only by immutable Clerk subjects in `ADMIN_CLERK_IDS`. Each Clerk instance must enforce its configured verification and legal-consent path, and cutover must prove an unverified account cannot complete sign-in.
+Every active Clerk account is publisher-eligible in public mode. Email, CLI input, and mutable profile usernames are not publisher authority; administrators are identified only by immutable Clerk subjects in `ADMIN_CLERK_IDS`. A GitHub external ID is authority only for an exact reviewed additional scope grant. Each Clerk instance must enforce its configured verification and legal-consent path, and cutover must prove an unverified account cannot complete sign-in.
 
 Unlinking GitHub or changing an administrator list is reconciled when the user next authenticates; it does not proactively rewrite every stored user row or revoke existing tokens. During an incident, keep the registry read-only, revoke affected tokens, explicitly demote or suspend the TablesDB user, and verify the result instead of waiting for another login.
 
@@ -42,11 +42,13 @@ The scanner validates the archive's `package.json` identity and safe paths. The 
 
 Next step: add signed provenance/attestations and, if risk warrants it, a separately isolated static-analysis or sandbox stage. Continue to keep lifecycle scripts disabled.
 
-## Private packages are not production-ready
+## Private packages require a paid Clerk plan and remain disabled until pricing is approved
 
-`ALLOW_PRIVATE_PACKAGES` is disabled. The data model contains visibility and organization groundwork, but end-to-end private-download authorization, organization membership, and scoped private caching have not completed production review.
+The implementation is fail-closed: private package creation, publication, metadata, and tarballs require an active non-free Clerk Billing subscription containing `CLERK_PRIVATE_PACKAGES_FEATURE`. Reads are limited to the immutable package owner; administrators do not bypass private artifact isolation. Private responses use `private, no-store` plus `Vary: Authorization`, and private metadata/artifacts never enter shared KV or Cache API. A positive entitlement decision can remain cached for at most 30 seconds.
 
-Next step: implement and test authorization on metadata, tarball, cache, and token paths before enabling the flag.
+`ALLOW_PRIVATE_PACKAGES` stays disabled in deployed environments until an operator creates and prices the Clerk user plan, attaches the reviewed feature slug, validates checkout/cancellation/past-due behavior, and completes owner/non-owner/cache-leak drills. Organization sharing is deliberately unsupported; private packages currently have one tenant owner.
+
+Next step: configure the paid Clerk plan and pricing page, then pass purchase, cancellation, owner/non-owner, token-scope, and cache-isolation drills before enabling the flag.
 
 ## Device approval is intentionally manual
 

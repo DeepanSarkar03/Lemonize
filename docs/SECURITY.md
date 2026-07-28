@@ -21,7 +21,7 @@ The flow is:
 1. `/v1/auth/device/start` creates a timestamped random device secret with a domain-separated HMAC derived from `SCANNER_SHARED_SECRET` and then derives the display code. The verification URL does not carry the code; the domain separation is distinct from scanner request signatures.
 2. The user signs in on the web app with Clerk, compares the terminal, and manually enters the code. Users must approve only a code they started on their own device.
 3. `/v1/auth/device/approve` requires a Clerk browser session. The Worker verifies an RS256 JWT with the configured HTTPS issuer's remote JWKS, exact `iss`, required `sub`/`exp`/`azp` claims, expiry, and an exact `CLERK_AUTHORIZED_PARTIES` origin.
-4. The Worker uses `CLERK_SECRET_KEY` server-side to fetch the Clerk user, reject missing, banned, or locked accounts, and obtain profile email plus the stable GitHub external ID required for public publisher eligibility.
+4. The Worker uses `CLERK_SECRET_KEY` server-side to fetch the Clerk user and reject missing, banned, or locked accounts. A stable GitHub external ID is used only for explicitly configured additional package scopes.
 5. Poll verifies the device secret's HMAC and server-enforced 10-minute age. The approval is kept in a per-code Durable Object for 120 seconds and consumed in a storage transaction, so a successful poll returns the scoped token at most once across regions. Expired undelivered approvals remove or revoke their token row.
 
 The manual code entry is deliberate: putting the code in a first-party approval URL would let an attacker send a publisher a login-CSRF approval link.
@@ -30,7 +30,7 @@ The production Clerk instance is provisioned behind `https://clerk.lemonize.cyou
 
 ## Roles, namespaces, and scopes
 
-In `public` mode, an active Clerk account with a linked GitHub external ID is provisioned as a publisher; an account without GitHub remains a consumer. Email and mutable GitHub username are profile attributes, not authority. `ADMIN_CLERK_IDS` grants administrator role only by immutable Clerk subject. Configure every Clerk environment to enforce its intended email verification, legal consent, and GitHub OAuth path.
+In `public` mode, every active Clerk account is provisioned as a publisher. Email and mutable profile usernames are not authority; the immutable Clerk subject owns the account namespace. `ADMIN_CLERK_IDS` grants administrator role only by immutable Clerk subject. Configure every Clerk environment to enforce its intended verification and legal-consent path.
 
 The preferred namespace is normalized from the GitHub username. A collision receives a deterministic suffix derived from the stable GitHub external ID. An existing account may adopt that namespace only before it owns a package; after ownership begins, namespace and package coordinates remain frozen across profile changes.
 
@@ -49,14 +49,14 @@ Publishing additionally requires:
 
 Supported API-token scopes are:
 
-| Scope             | Capability                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `read`            | Reserved/descriptive today; public reads and `/auth/me` do not currently gate on it  |
-| `publish`         | Start and complete publishes, subject to role, mode, namespace, and ownership checks |
-| `manage:packages` | Package maintenance operations                                                       |
-| `manage:tokens`   | Manage the current root lineage; a fresh Clerk session may manage every account token |
+| Scope             | Capability                                                                              |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| `read`            | Read owner-authorized private metadata/artifacts; public reads and `/auth/me` stay open |
+| `publish`         | Start and complete publishes, subject to role, mode, namespace, and ownership checks    |
+| `manage:packages` | Package maintenance operations                                                          |
+| `manage:tokens`   | Manage the current root lineage; a fresh Clerk session may manage every account token   |
 
-The automatic device token lasts 30 days. Consumers receive `read` and `manage:tokens`; publishers and admins receive all four scopes. These Clerk/device-issued credentials are independent roots. Token creation accepts an explicit scope set and a 1-90 day lifetime. Independent roots can exist without `manage:tokens`, but an API-token caller must be an active root with that scope to manage its lineage. Its child cannot receive `manage:tokens`, cannot receive another scope the root lacks, and cannot outlive the root. A child therefore cannot delegate again. The active-token limit is ten per account. The runtime validates that stored scopes are recognized, but only publish and management routes currently enforce a capability scope.
+The automatic device token lasts 30 days. Invite-only consumers receive `read` and `manage:tokens`; public-mode publishers and admins receive all four scopes. These Clerk/device-issued credentials are independent roots. Token creation accepts an explicit scope set and a 1-90 day lifetime. Independent roots can exist without `manage:tokens`, but an API-token caller must be an active root with that scope to manage its lineage. Its child cannot receive `manage:tokens`, cannot receive another scope the root lacks, and cannot outlive the root. A child therefore cannot delegate again. The active-token limit is ten per account. The runtime validates that stored scopes are recognized; private reads enforce `read`, publishing enforces `publish`, and management routes enforce their capability scope.
 
 Legacy unscoped packages are compatibility data only. They remain readable and downloadable, while the publish path rejects an unscoped name and non-admin maintenance requires ownership plus a non-empty package scope in the caller's server-derived authorization set. Administrators retain an explicit remediation override only when the registry is mutable; production `read_only` rejects every HTTP package-mutation route before that override.
 

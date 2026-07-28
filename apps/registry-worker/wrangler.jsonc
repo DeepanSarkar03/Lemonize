@@ -7,20 +7,20 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true,
-    "logs": { "enabled": true, "invocation_logs": true, "head_sampling_rate": 0.05 }
+    "logs": { "enabled": true, "invocation_logs": true, "head_sampling_rate": 0.05 },
   },
   "triggers": { "crons": ["*/15 * * * *"] },
   "durable_objects": {
     "bindings": [
       { "name": "DEVICE_APPROVALS", "class_name": "DeviceApprovalObject" },
-      { "name": "RATE_LIMITS", "class_name": "RateLimitObject" }
-    ]
+      { "name": "RATE_LIMITS", "class_name": "RateLimitObject" },
+    ],
   },
   "migrations": [
     {
       "tag": "v1-auth-controls",
-      "new_sqlite_classes": ["DeviceApprovalObject", "RateLimitObject"]
-    }
+      "new_sqlite_classes": ["DeviceApprovalObject", "RateLimitObject"],
+    },
   ],
 
   // Default (dev) vars. Secrets go in .dev.vars (local) or `wrangler secret` (remote).
@@ -45,7 +45,8 @@
     "APPWRITE_QUARANTINE_BUCKET_ID": "quarantine",
     "APPWRITE_SCANNER_FUNCTION_ID": "artifact-scanner",
     "CLERK_ISSUER": "https://hip-goshawk-51.clerk.accounts.dev",
-    "CLERK_AUTHORIZED_PARTIES": "http://localhost:3000,http://127.0.0.1:3000"
+    "CLERK_AUTHORIZED_PARTIES": "http://localhost:3000,http://127.0.0.1:3000",
+    "CLERK_PRIVATE_PACKAGES_FEATURE": "private-packages",
   },
 
   "kv_namespaces": [{ "binding": "KV", "id": "fd0727d874854f2699dc28447104a490" }],
@@ -74,17 +75,18 @@
         "APPWRITE_QUARANTINE_BUCKET_ID": "quarantine",
         "APPWRITE_SCANNER_FUNCTION_ID": "artifact-scanner",
         "CLERK_ISSUER": "https://clerk.lemonize.cyou",
-        "CLERK_AUTHORIZED_PARTIES": "https://lemonize.cyou,https://www.lemonize.cyou"
+        "CLERK_AUTHORIZED_PARTIES": "https://lemonize.cyou,https://www.lemonize.cyou",
+        "CLERK_PRIVATE_PACKAGES_FEATURE": "private-packages",
       },
       "durable_objects": {
         "bindings": [
           { "name": "DEVICE_APPROVALS", "class_name": "DeviceApprovalObject" },
-          { "name": "RATE_LIMITS", "class_name": "RateLimitObject" }
-        ]
+          { "name": "RATE_LIMITS", "class_name": "RateLimitObject" },
+        ],
       },
       "kv_namespaces": [{ "binding": "KV", "id": "125f30f5fcdc4134be210a2aa8e4b5f2" }],
       "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "lemonize-artifacts-prod" }],
-      "routes": [{ "pattern": "registry.lemonize.cyou", "custom_domain": true }]
+      "routes": [{ "pattern": "registry.lemonize.cyou", "custom_domain": true }],
     },
     "staging": {
       "triggers": { "crons": ["*/15 * * * *"] },
@@ -109,17 +111,18 @@
         "APPWRITE_QUARANTINE_BUCKET_ID": "quarantine",
         "APPWRITE_SCANNER_FUNCTION_ID": "artifact-scanner",
         "CLERK_ISSUER": "https://hip-goshawk-51.clerk.accounts.dev",
-        "CLERK_AUTHORIZED_PARTIES": "https://lemonize-staging.vercel.app"
+        "CLERK_AUTHORIZED_PARTIES": "https://lemonize-staging.vercel.app",
+        "CLERK_PRIVATE_PACKAGES_FEATURE": "private-packages",
       },
       "durable_objects": {
         "bindings": [
           { "name": "DEVICE_APPROVALS", "class_name": "DeviceApprovalObject" },
-          { "name": "RATE_LIMITS", "class_name": "RateLimitObject" }
-        ]
+          { "name": "RATE_LIMITS", "class_name": "RateLimitObject" },
+        ],
       },
       "kv_namespaces": [{ "binding": "KV", "id": "a3e8000112db411e8bbf977981f4c695" }],
       "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "lemonize-artifacts-staging" }],
-      "routes": [{ "pattern": "registry-staging.lemonize.cyou", "custom_domain": true }]
-    }
-  }
+      "routes": [{ "pattern": "registry-staging.lemonize.cyou", "custom_domain": true }],
+    },
+  },
 }

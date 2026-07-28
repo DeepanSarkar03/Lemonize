@@ -3,7 +3,14 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
-import { Compass, BookOpen, Package, SquaresFour, SignIn } from '@phosphor-icons/react/dist/ssr';
+import {
+  Compass,
+  BookOpen,
+  Package,
+  SquaresFour,
+  SignIn,
+  CreditCard,
+} from '@phosphor-icons/react/dist/ssr';
 import { BrandMark } from '@/components/BrandMark';
 
 const links: Array<{
@@ -14,6 +21,7 @@ const links: Array<{
 }> = [
   { href: '/docs#npm-cdn', activePath: null, label: 'CDN', icon: Package },
   { href: '/explore', label: 'Explore', icon: Compass },
+  { href: '/pricing', label: 'Pricing', icon: CreditCard },
   { href: '/docs', label: 'Docs', icon: BookOpen },
 ];
 

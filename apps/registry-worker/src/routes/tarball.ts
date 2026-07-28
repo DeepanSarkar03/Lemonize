@@ -10,8 +10,10 @@ import type { AppBindings } from '../lib/env.js';
 import { registryAppwriteRepository } from '../lib/appwrite-repository.js';
 import { getDownloadablePackage, resolvePublicVersion } from '../lib/appwrite-public.js';
 import { rateLimit } from '../lib/ratelimit.js';
-import { IMMUTABLE_CACHE, defaultCache } from '../lib/http-cache.js';
+import { IMMUTABLE_CACHE, NO_STORE, defaultCache } from '../lib/http-cache.js';
 import { kvKeys } from '../lib/kv-cache.js';
+import { requirePackageReadAccess } from '../lib/package-access.js';
+import { packageVisibility } from '../lib/private-packages.js';
 
 export const tarball = new Hono<AppBindings>();
 
@@ -41,15 +43,11 @@ function requestedFilename(value: string | undefined, fallback: string): string 
   return value && value.length <= 128 && /^[A-Za-z0-9._-]+$/.test(value) ? value : fallback;
 }
 
-async function resolveTarget(
-  c: Context<AppBindings>,
-  name: string,
-  versionSpec: string,
-) {
+async function resolvePackage(c: Context<AppBindings>, name: string) {
   const repo = registryAppwriteRepository(c.env);
   const pkg = await getDownloadablePackage(repo, name);
-  const versionRow = await resolvePublicVersion(repo, pkg, name, versionSpec);
-  return { pkg, versionRow };
+  await requirePackageReadAccess(c, pkg);
+  return { repo, pkg };
 }
 
 async function serveTarball(
@@ -61,13 +59,16 @@ async function serveTarball(
   const cfg = c.get('config');
   await rateLimit(c, 'read', cfg.rateLimitReadsPerMinute);
   const rangeHeader = c.req.header('range');
-  const exactCacheCandidate =
-    c.req.method === 'GET' && !rangeHeader && isValidVersion(versionSpec);
   if (isValidVersion(versionSpec)) {
     if (await hasSecurityBlockTombstone(c.env.KV, name, versionSpec)) {
       throw notFound(ErrorCodes.VERSION_NOT_FOUND, `Version ${versionSpec} was not found`);
     }
   }
+  // A positive marker is written only after an Appwrite public-visibility
+  // check, expires quickly, and visibility is immutable. It lets hot public
+  // artifacts stay on the millisecond Cache API path. Private artifacts never
+  // receive this marker and always reach the authorization path below.
+  const exactCacheCandidate = c.req.method === 'GET' && !rangeHeader && isValidVersion(versionSpec);
   let cache: Cache | null | undefined;
   if (exactCacheCandidate) {
     try {
@@ -85,7 +86,8 @@ async function serveTarball(
     }
   }
   const normalizedCacheUrl = new URL(c.req.url);
-  if (downloadName) normalizedCacheUrl.pathname = normalizedCacheUrl.pathname.replace(/\/[^/]+$/, '');
+  if (downloadName)
+    normalizedCacheUrl.pathname = normalizedCacheUrl.pathname.replace(/\/[^/]+$/, '');
   normalizedCacheUrl.search = '';
   const cacheKey = new Request(normalizedCacheUrl.toString());
   if (cache) {
@@ -103,16 +105,18 @@ async function serveTarball(
       return new Response(hit.body, { status: hit.status, headers });
     }
   }
-  const { pkg, versionRow } = await resolveTarget(c, name, versionSpec);
-  if (exactCacheCandidate) {
+  const { repo, pkg } = await resolvePackage(c, name);
+  const isPrivate = packageVisibility(pkg) === 'private';
+  const responseCacheControl = isPrivate ? NO_STORE : IMMUTABLE_CACHE;
+  if (isPrivate) cache = null;
+  const versionRow = await resolvePublicVersion(repo, pkg, name, versionSpec);
+  if (exactCacheCandidate && !isPrivate) {
     if (versionRow.status === 'published' && !versionRow.yankedAt) {
       cache ??= defaultCache();
       c.executionCtx.waitUntil(
-        c.env.KV
-          .put(kvKeys.publicVersion(pkg.normalizedName, versionRow.version), '1', {
-            expirationTtl: 60,
-          })
-          .catch(() => undefined),
+        c.env.KV.put(kvKeys.publicVersion(pkg.normalizedName, versionRow.version), '1', {
+          expirationTtl: 60,
+        }).catch(() => undefined),
       );
     } else {
       cache = null;
@@ -125,7 +129,7 @@ async function serveTarball(
   // Tags and semver ranges are mutable. Redirect them to the content's exact,
   // immutable version URL before consulting the edge cache so `latest` can
   // never pin an older artifact for a year.
-  if (versionSpec !== versionRow.version) {
+  if (!isPrivate && versionSpec !== versionRow.version) {
     const canonical = `${cfg.registryBaseUrl}/v1/packages/${encodeURIComponent(pkg.name)}/versions/${encodeURIComponent(versionRow.version)}/tarball${
       downloadName ? `/${encodeURIComponent(filename)}` : ''
     }`;
@@ -142,25 +146,35 @@ async function serveTarball(
   if (c.req.header('if-none-match') === etag) {
     return new Response(null, {
       status: 304,
-      headers: { etag, 'cache-control': IMMUTABLE_CACHE, 'x-lemonize-cache': 'HIT' },
+      headers: {
+        etag,
+        'cache-control': responseCacheControl,
+        'x-lemonize-cache': isPrivate ? 'BYPASS' : 'HIT',
+        ...(isPrivate ? { vary: 'Authorization', pragma: 'no-cache' } : {}),
+      },
     });
   }
 
   const baseHeaders: Record<string, string> = {
     'content-type': 'application/gzip',
     'content-disposition': `attachment; filename="${filename}"`,
-    'cache-control': IMMUTABLE_CACHE,
+    'cache-control': responseCacheControl,
     etag,
     'x-lemonize-integrity': versionRow.integrity,
     'x-lemonize-version': versionRow.version,
     'x-content-type-options': 'nosniff',
     'accept-ranges': 'bytes',
+    ...(isPrivate ? { vary: 'Authorization', pragma: 'no-cache' } : {}),
   };
 
   if (c.req.method === 'HEAD') {
     return new Response(null, {
       status: 200,
-      headers: { ...baseHeaders, 'content-length': String(versionRow.tarballSize) },
+      headers: {
+        ...baseHeaders,
+        'content-length': String(versionRow.tarballSize),
+        'x-lemonize-cache': isPrivate ? 'BYPASS' : 'MISS',
+      },
     });
   }
 
@@ -174,15 +188,21 @@ async function serveTarball(
       end = 0;
     } else if (!match[1]) {
       const suffixLength = Number(match[2]);
-      start = Number.isSafeInteger(suffixLength) && suffixLength > 0
-        ? Math.max(0, total - suffixLength)
-        : total;
+      start =
+        Number.isSafeInteger(suffixLength) && suffixLength > 0
+          ? Math.max(0, total - suffixLength)
+          : total;
       end = total - 1;
     } else {
       start = Number(match[1]);
       end = match[2] ? Number(match[2]) : total - 1;
     }
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= total) {
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start > end ||
+      start >= total
+    ) {
       return new Response(null, {
         status: 416,
         headers: { 'content-range': `bytes */${total}` },
@@ -209,7 +229,7 @@ async function serveTarball(
   const headers = new Headers({
     ...baseHeaders,
     'content-length': String(versionRow.tarballSize),
-    'x-lemonize-cache': 'MISS',
+    'x-lemonize-cache': isPrivate ? 'BYPASS' : 'MISS',
   });
   const response = new Response(obj.body, { status: 200, headers });
   if (cache) c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));

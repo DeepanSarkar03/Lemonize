@@ -25,11 +25,13 @@ const pkg: AppwriteRow<PackageData> = {
   normalizedName: '@demo/pkg',
   scope: '@demo',
   ownerId: 'owner-1',
+  visibility: 'public',
   description: 'Demo package',
   readme: '# Demo',
   status: 'active',
   latestVersion: '1.2.0',
   storageBytes: 1234,
+  publishedVersionCount: 2,
 };
 
 function version(
@@ -158,8 +160,14 @@ describe('Appwrite public registry reads', () => {
       bin: { demo: 'bin/demo.js' },
       tarball: 'https://registry.example/v1/packages/%40demo%2Fpkg/versions/1.2.0/tarball',
     });
-    const listUrls = backend.urls.filter((url) => url.includes('/versions/') || url.includes('/dist_tags/'));
-    expect(listUrls.every((url) => new URL(url).searchParams.getAll('queries[]').some((query) => query.includes('5000')))).toBe(true);
+    const listUrls = backend.urls.filter(
+      (url) => url.includes('/versions/') || url.includes('/dist_tags/'),
+    );
+    expect(
+      listUrls.every((url) =>
+        new URL(url).searchParams.getAll('queries[]').some((query) => query.includes('5000')),
+      ),
+    ).toBe(true);
   });
 
   it('resolves tags and semver only against published, non-yanked versions', async () => {
@@ -194,6 +202,18 @@ describe('Appwrite public registry reads', () => {
       code: 'PACKAGE_NOT_FOUND',
       status: 404,
     });
+  });
+
+  it('never exposes private package metadata through the public lookup', async () => {
+    const privatePackage = { ...pkg, visibility: 'private' as const };
+    const backend = publicBackend(privatePackage);
+    await expect(getPublicPackage(repository(backend.fetcher), '@demo/pkg')).rejects.toMatchObject({
+      code: 'PACKAGE_NOT_FOUND',
+      status: 404,
+    });
+    await expect(
+      buildPackageMetadata(repository(backend.fetcher), privatePackage, 'https://registry.example'),
+    ).resolves.toMatchObject({ visibility: 'private' });
   });
 
   it('constructs a repository from migration bindings without changing Env', async () => {

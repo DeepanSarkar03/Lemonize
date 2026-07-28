@@ -32,6 +32,7 @@ const baseEnvironment = {
   APPWRITE_SCANNER_FUNCTION_ID: 'scanner',
   CLERK_ISSUER: 'https://clerk.test.example',
   CLERK_AUTHORIZED_PARTIES: 'https://web.test.example',
+  CLERK_PRIVATE_PACKAGES_FEATURE: 'private-packages',
 };
 
 async function render(overrides) {

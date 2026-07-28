@@ -1,25 +1,25 @@
 import type { PackageManifest, PackageMetadata, PackageVersion } from '@lemonize/shared';
 import { AppwriteQuery } from './appwrite.js';
 import type { RegistryAppwriteRepository } from './appwrite-repository.js';
-import type {
-  AppwriteRow,
-  PackageData,
-  UserData,
-  VersionData,
-} from './appwrite-types.js';
+import type { AppwriteRow, PackageData, UserData, VersionData } from './appwrite-types.js';
+import { packageVisibility } from './private-packages.js';
 
-export function isPublicPackage(pkg: AppwriteRow<PackageData>): boolean {
+export function isPublishedPackage(pkg: AppwriteRow<PackageData>): boolean {
   return (
-    (pkg.status === 'active' || pkg.status === 'published') &&
-    (pkg.publishedVersionCount ?? 0) > 0
+    (pkg.status === 'active' || pkg.status === 'published') && (pkg.publishedVersionCount ?? 0) > 0
   );
 }
 
+export function isPublicPackage(pkg: AppwriteRow<PackageData>): boolean {
+  return packageVisibility(pkg) === 'public' && isPublishedPackage(pkg);
+}
+
+export function isPrivatePackage(pkg: AppwriteRow<PackageData>): boolean {
+  return packageVisibility(pkg) === 'private' && isPublishedPackage(pkg);
+}
+
 export function isPublishedVersion(version: AppwriteRow<VersionData>): boolean {
-  return (
-    version.status === 'published' &&
-    !version.yankedAt
-  );
+  return version.status === 'published' && !version.yankedAt;
 }
 
 function parseManifest(value: string): PackageManifest | undefined {
@@ -38,7 +38,9 @@ function binMap(
   packageName: string,
 ): Record<string, string> | undefined {
   if (typeof manifest?.bin === 'string') {
-    const command = packageName.includes('/') ? packageName.slice(packageName.lastIndexOf('/') + 1) : packageName;
+    const command = packageName.includes('/')
+      ? packageName.slice(packageName.lastIndexOf('/') + 1)
+      : packageName;
     return command ? { [command]: manifest.bin } : undefined;
   }
   if (typeof manifest?.bin !== 'object' || manifest.bin === null || Array.isArray(manifest.bin)) {
@@ -104,7 +106,7 @@ export async function buildPackageMetadata(
     name: pkg.name,
     normalizedName: pkg.normalizedName,
     scope: pkg.scope || null,
-    visibility: 'public',
+    visibility: packageVisibility(pkg),
     description: pkg.description ?? undefined,
     latest: pkg.latestVersion ?? distTags.latest,
     distTags,

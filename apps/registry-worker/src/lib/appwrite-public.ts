@@ -32,7 +32,11 @@ export async function getDownloadablePackage(
 ): Promise<AppwriteRow<PackageData>> {
   const normalized = normalizePackageName(name);
   const pkg = await repo.getPackageByNormalizedName(normalized);
-  if (!pkg || (pkg.status !== 'active' && pkg.status !== 'published')) {
+  if (
+    !pkg ||
+    (pkg.status !== 'active' && pkg.status !== 'published') ||
+    (pkg.visibility != null && pkg.visibility !== 'public' && pkg.visibility !== 'private')
+  ) {
     throw notFound(ErrorCodes.PACKAGE_NOT_FOUND, `Package ${name} was not found`);
   }
   return pkg;
@@ -52,8 +56,7 @@ export async function resolvePublicVersion(
   if (isValidVersion(versionSpec)) {
     const exact = versions.rows.find((candidate) => candidate.version === versionSpec);
     const normallyYanked =
-      Boolean(exact?.yankedAt) &&
-      (exact?.status === 'yanked' || exact?.status === 'published');
+      Boolean(exact?.yankedAt) && (exact?.status === 'yanked' || exact?.status === 'published');
     if (exact && (isPublishedVersion(exact) || normallyYanked)) return exact;
   }
   const distTags: Record<string, string> = {};

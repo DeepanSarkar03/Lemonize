@@ -18,30 +18,15 @@ import {
   profileReconciliationCachePolicy,
   type PackageScopeGrant,
 } from './package-scope-grants.js';
+import {
+  fetchClerkUser,
+  type ClerkEmailAddress,
+  type ClerkExternalAccount,
+} from './clerk-backend.js';
 
 const ALL_SCOPES: TokenScope[] = ['read', 'publish', 'manage:packages', 'manage:tokens'];
 const NAMESPACE_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const tokenTouches = new Map<string, number>();
-
-interface ClerkEmailAddress {
-  id?: unknown;
-  email_address?: unknown;
-}
-
-interface ClerkExternalAccount {
-  provider?: unknown;
-  username?: unknown;
-  provider_user_id?: unknown;
-  external_id?: unknown;
-}
-
-interface ClerkUserResponse {
-  primary_email_address_id?: unknown;
-  email_addresses?: unknown;
-  external_accounts?: unknown;
-  banned?: unknown;
-  locked?: unknown;
-}
 
 interface ClerkProfile {
   email: string;
@@ -195,23 +180,6 @@ async function authenticateApiToken(c: Context<AppBindings>, token: string): Pro
     c.executionCtx.waitUntil(repo.touchToken(row.$id).catch(() => undefined));
   }
   return true;
-}
-
-async function fetchClerkUser(
-  env: AppBindings['Bindings'],
-  clerkId: string,
-): Promise<ClerkUserResponse | null> {
-  if (!env.CLERK_SECRET_KEY) throw new Error('Clerk backend key is not configured.');
-  const response = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(clerkId)}`, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${env.CLERK_SECRET_KEY}`,
-    },
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error('Clerk user lookup failed.');
-  return (await response.json()) as ClerkUserResponse;
 }
 
 async function fetchClerkProfile(

@@ -6,11 +6,7 @@ import {
   roleForAccount,
   shouldAdoptGithubNamespace,
 } from '../src/lib/account-policy.js';
-import {
-  namespaceWithSuffix,
-  normalizedNamespace,
-  provisionalNamespace,
-} from '../src/lib/auth.js';
+import { namespaceWithSuffix, normalizedNamespace, provisionalNamespace } from '../src/lib/auth.js';
 
 describe('public publisher account policy', () => {
   it('fails closed when publishing variables are absent or malformed', () => {
@@ -27,17 +23,42 @@ describe('public publisher account policy', () => {
       PACKAGE_SCOPE_GRANTS_JSON: '[]',
     } as Env);
     expect(malformed.registryMode).toBe('read_only');
+
+    const privateWithoutClerkFeature = loadConfig({
+      REGISTRY_MODE: 'public',
+      ALLOW_PRIVATE_PACKAGES: 'true',
+      PACKAGE_SCOPE_GRANTS_JSON: '[]',
+    } as Env);
+    expect(privateWithoutClerkFeature.allowPrivatePackages).toBe(false);
+
+    const paidPrivate = loadConfig({
+      REGISTRY_MODE: 'public',
+      ALLOW_PRIVATE_PACKAGES: 'true',
+      CLERK_PRIVATE_PACKAGES_FEATURE: 'private-packages',
+      PACKAGE_SCOPE_GRANTS_JSON: '[]',
+    } as Env);
+    expect(paidPrivate.allowPrivatePackages).toBe(true);
   });
 
-  it('uses GitHub linkage for public eligibility and immutable Clerk ids for admins', () => {
+  it('makes every authenticated account a public publisher and uses immutable Clerk ids for admins', () => {
     const config = { registryMode: 'public' as const, adminClerkIds: ['user_admin'] };
-    expect(roleForAccount(config, { clerkId: 'user_public', githubId: '12345' })).toBe(
+    expect(roleForAccount(config, { clerkId: 'user_public', githubId: '12345' })).toBe('publisher');
+    expect(roleForAccount(config, { clerkId: 'user_email_only', githubId: null })).toBe(
       'publisher',
     );
-    expect(roleForAccount(config, { clerkId: 'user_email_only', githubId: null })).toBe(
-      'consumer',
-    );
     expect(roleForAccount(config, { clerkId: 'user_admin', githubId: null })).toBe('admin');
+  });
+
+  it('preserves explicit publishers while invite-only and keeps new accounts as consumers', () => {
+    const config = { registryMode: 'invite_only' as const, adminClerkIds: [] };
+    expect(
+      roleForAccount(config, {
+        clerkId: 'user_existing',
+        githubId: null,
+        existingRole: 'publisher',
+      }),
+    ).toBe('publisher');
+    expect(roleForAccount(config, { clerkId: 'user_new', githubId: '12345' })).toBe('consumer');
   });
 
   it('does not treat a prior terms timestamp as acceptance of a new version', () => {

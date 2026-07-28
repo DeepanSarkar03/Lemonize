@@ -6,10 +6,15 @@ import { readFileSync } from 'node:fs';
 
 const apply = process.argv.includes('--apply');
 const database = process.env.CF_D1_DATABASE_NAME || 'lemonize_db';
-const appwriteEndpoint = (process.env.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1').replace(/\/+$/, '');
+const appwriteEndpoint = (
+  process.env.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1'
+).replace(/\/+$/, '');
 const appwriteProject = process.env.APPWRITE_PROJECT_ID || 'lemonize-prod-2026';
 const appwriteKey = process.env.APPWRITE_API_KEY;
-const registryUrl = (process.env.LEGACY_REGISTRY_URL || 'https://registry.lemonize.cyou').replace(/\/+$/, '');
+const registryUrl = (process.env.LEGACY_REGISTRY_URL || 'https://registry.lemonize.cyou').replace(
+  /\/+$/,
+  '',
+);
 const ownerEmailMap = JSON.parse(process.env.LEGACY_OWNER_EMAIL_MAP || '{}');
 
 if (apply) {
@@ -22,7 +27,8 @@ if (apply) {
     'LEGACY_OWNER_EMAIL_MAP',
   ];
   const missing = required.filter((name) => !process.env[name]);
-  if (missing.length > 0) throw new Error(`Apply requires explicit configuration: ${missing.join(', ')}`);
+  if (missing.length > 0)
+    throw new Error(`Apply requires explicit configuration: ${missing.join(', ')}`);
   if (process.env.CONFIRM_CUTOVER !== appwriteProject) {
     throw new Error('CONFIRM_CUTOVER must exactly equal APPWRITE_PROJECT_ID.');
   }
@@ -41,10 +47,16 @@ function d1Query(sql) {
     },
   );
   if (result.status !== 0) {
-    throw new Error(`D1 query failed: ${(result.stderr || result.error?.message || 'unknown error').trim()}`);
+    throw new Error(
+      `D1 query failed: ${(result.stderr || result.error?.message || 'unknown error').trim()}`,
+    );
   }
   const decoded = JSON.parse(result.stdout);
-  if (!Array.isArray(decoded) || decoded[0]?.success !== true || !Array.isArray(decoded[0].results)) {
+  if (
+    !Array.isArray(decoded) ||
+    decoded[0]?.success !== true ||
+    !Array.isArray(decoded[0].results)
+  ) {
     throw new Error('D1 returned an unexpected response.');
   }
   return decoded[0].results;
@@ -54,7 +66,7 @@ function tableRows() {
   return {
     users: d1Query('SELECT id, username, email FROM users ORDER BY id'),
     packages: d1Query(
-      'SELECT id, name, normalized_name, scope, owner_user_id, description, readme, latest_version, deleted_at FROM packages ORDER BY id',
+      'SELECT id, name, normalized_name, scope, owner_user_id, description, readme, visibility, latest_version, deleted_at FROM packages ORDER BY id',
     ),
     versions: d1Query(
       'SELECT id, package_id, version, tarball_key, integrity, shasum, unpacked_size, tarball_size, file_count, manifest_json, published_by, published_at, deprecated_message, yanked_at FROM package_versions ORDER BY id',
@@ -66,11 +78,18 @@ function tableRows() {
 async function verifyArtifact(pkg, version) {
   const url = `${registryUrl}/v1/packages/${encodeURIComponent(pkg.name)}/versions/${encodeURIComponent(version.version)}/tarball`;
   const response = await fetch(url, { redirect: 'follow' });
-  if (!response.ok) throw new Error(`Legacy artifact check failed for ${pkg.name}@${version.version}: HTTP ${response.status}`);
+  if (!response.ok)
+    throw new Error(
+      `Legacy artifact check failed for ${pkg.name}@${version.version}: HTTP ${response.status}`,
+    );
   const bytes = Buffer.from(await response.arrayBuffer());
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
-  if (bytes.byteLength !== version.tarball_size || sha256 !== version.shasum || integrity !== version.integrity) {
+  if (
+    bytes.byteLength !== version.tarball_size ||
+    sha256 !== version.shasum ||
+    integrity !== version.integrity
+  ) {
     throw new Error(`Legacy artifact integrity mismatch for ${pkg.name}@${version.version}.`);
   }
 }
@@ -93,9 +112,11 @@ async function upsertChecked(table, id, data) {
     body: JSON.stringify({ rowId: id, data }),
   });
   if (response.ok) return 'created';
-  if (response.status !== 409) throw new Error(`Appwrite ${table}/${id} create failed: HTTP ${response.status}`);
+  if (response.status !== 409)
+    throw new Error(`Appwrite ${table}/${id} create failed: HTTP ${response.status}`);
   const existingResponse = await fetch(`${base}/${encodeURIComponent(id)}`, { headers: headers() });
-  if (!existingResponse.ok) throw new Error(`Appwrite ${table}/${id} conflict could not be verified.`);
+  if (!existingResponse.ok)
+    throw new Error(`Appwrite ${table}/${id} conflict could not be verified.`);
   const existing = await existingResponse.json();
   for (const [key, value] of Object.entries(data)) {
     const current = existing[key] ?? null;
@@ -113,9 +134,14 @@ async function upsertChecked(table, id, data) {
   return 'verified';
 }
 
-const source = process.argv.includes('--stdin')
-  ? JSON.parse(readFileSync(0, 'utf8'))
-  : tableRows();
+const source = process.argv.includes('--stdin') ? JSON.parse(readFileSync(0, 'utf8')) : tableRows();
+for (const pkg of source.packages) {
+  if (pkg.visibility !== 'public' && pkg.visibility !== 'private') {
+    throw new Error(
+      `Package ${pkg.id || '<unknown>'} has missing or invalid visibility; refusing to migrate it as public.`,
+    );
+  }
+}
 const packagesById = new Map(source.packages.map((pkg) => [pkg.id, pkg]));
 const versionsByPackage = new Map();
 for (const version of source.versions) {
@@ -183,10 +209,7 @@ for (const user of source.users) {
   const storageBytes = owned.reduce(
     (total, pkg) =>
       total +
-      (versionsByPackage.get(pkg.id) || []).reduce(
-        (sum, version) => sum + version.tarball_size,
-        0,
-      ),
+      (versionsByPackage.get(pkg.id) || []).reduce((sum, version) => sum + version.tarball_size, 0),
     0,
   );
   await write('users', user.id, {
@@ -205,10 +228,7 @@ for (const user of source.users) {
 
 for (const pkg of source.packages) {
   const versions = versionsByPackage.get(pkg.id) || [];
-  const storageBytes = versions.reduce(
-    (sum, version) => sum + version.tarball_size,
-    0,
-  );
+  const storageBytes = versions.reduce((sum, version) => sum + version.tarball_size, 0);
   const availableVersions = new Set(
     versions.filter((version) => !version.yanked_at).map((version) => version.version),
   );
@@ -217,6 +237,7 @@ for (const pkg of source.packages) {
     normalizedName: pkg.normalized_name,
     scope: pkg.scope || '',
     ownerId: pkg.owner_user_id,
+    visibility: pkg.visibility,
     description: pkg.description,
     readme: pkg.readme,
     status: pkg.deleted_at ? 'deleted' : 'active',
@@ -264,4 +285,6 @@ for (const tag of source.tags) {
   });
 }
 
-console.log(`Appwrite cutover import complete: ${results.created} created, ${results.verified} already matched.`);
+console.log(
+  `Appwrite cutover import complete: ${results.created} created, ${results.verified} already matched.`,
+);
