@@ -79,8 +79,8 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
-      - name: Re-audit production dependencies at release time
-        run: pnpm audit --prod --audit-level high
+      - name: Re-audit all dependencies at release time
+        run: pnpm audit --audit-level high
       - name: Build and pack npm package without release authority
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -141,6 +141,7 @@ jobs:
             throw new Error('npm pack returned unexpected CLI artifact metadata');
           }
           NODE
+          cp "$RUNNER_TEMP/cli-pack.json" "$RUNNER_TEMP/cli-package/cli-pack.json"
       - name: Verify an existing release or mark the version absent
         id: registry_state
         env:
@@ -180,7 +181,7 @@ jobs:
         if: steps.registry_state.outputs.value == 'missing'
         with:
           name: cli-package-${{ github.sha }}
-          path: ${{ runner.temp }}/cli-package/*.tgz
+          path: ${{ runner.temp }}/cli-package/*
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -216,20 +217,47 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      - name: Require an npm version with trusted publishing support
+        run: |
+          node - "$(npm --version)" <<'NODE'
+          const [version] = process.argv.slice(2);
+          const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
+          if (!match) throw new Error(`Could not parse npm version: ${version}`);
+          const actual = match.slice(1, 4).map(Number);
+          const minimum = [11, 5, 1];
+          const supported = actual.some(
+            (part, index) =>
+              part > minimum[index] &&
+              actual.slice(0, index).every((value, prior) => value === minimum[prior]),
+          ) || actual.every((part, index) => part === minimum[index]);
+          if (!supported) {
+            throw new Error(`npm ${version} cannot use trusted publishing; require npm >=11.5.1`);
+          }
+          console.log(`Verified trusted-publishing-capable npm ${version}`);
+          NODE
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-package-${{ github.sha }}
           path: ${{ runner.temp }}/cli-package
           digest-mismatch: error
-      - name: Publish or verify @lemonize/cli with npm trusted publishing
+      - name: Publish and verify @lemonize/cli with npm trusted publishing
         env:
+          CLI_PACK_JSON: ${{ runner.temp }}/cli-package/cli-pack.json
           REGISTRY_STATE: ${{ needs.package.outputs.registry_state }}
+          RELEASE_PACKAGE: '@lemonize/cli'
+          RELEASE_REPOSITORY: https://github.com/${{ github.repository }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
           RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_WORKFLOW: .github/workflows/release-cli.yml
         run: |
           set -euo pipefail
           test "$REGISTRY_STATE" = 'missing'
@@ -271,3 +299,16 @@ jobs:
               exit 1
               ;;
           esac
+          export RELEASE_VERSION="$version"
+          verified=false
+          for delay in 0 2 4 8 16; do
+            if (( delay > 0 )); then sleep "$delay"; fi
+            if node scripts/ops/verify-npm-release.mjs; then
+              verified=true
+              break
+            fi
+          done
+          if [[ "$verified" != true ]]; then
+            echo "Published release did not pass exact integrity and provenance verification" >&2
+            exit 1
+          fi

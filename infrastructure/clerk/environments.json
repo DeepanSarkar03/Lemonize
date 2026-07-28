@@ -1,0 +1,16 @@
+{
+  "staging": {
+    "definition": "infrastructure/clerk/development.json",
+    "issuer": "https://hip-goshawk-51.clerk.accounts.dev",
+    "web_origin": "https://lemonize-staging.vercel.app",
+    "authorized_parties": ["https://lemonize-staging.vercel.app"],
+    "instance_environment": "development"
+  },
+  "production": {
+    "definition": "infrastructure/clerk/production.json",
+    "issuer": "https://clerk.lemonize.cyou",
+    "web_origin": "https://lemonize.cyou",
+    "authorized_parties": ["https://lemonize.cyou", "https://www.lemonize.cyou"],
+    "instance_environment": "production"
+  }
+}

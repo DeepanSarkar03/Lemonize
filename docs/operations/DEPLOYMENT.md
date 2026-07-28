@@ -36,6 +36,7 @@ Configure the following independently on the staging and production GitHub envir
 | Secret   | `CLOUDFLARE_API_TOKEN`                                                   | Least-privilege deployment token for the matching Worker, secrets, bindings, and route               |
 | Secret   | `CLOUDFLARE_ACCOUNT_ID`                                                  | Cloudflare account selected by Wrangler                                                              |
 | Secret   | `VERCEL_TOKEN`                                                           | Token scoped to the matching Vercel project/team                                                     |
+| Secret   | `VERCEL_AUTOMATION_BYPASS_SECRET`                                         | Per-project credential used only to verify the exact protected deployment before promotion           |
 | Secret   | `APPWRITE_DEPLOY_API_KEY`                                                | CI-only TablesDB/schema, bucket, and function administration                                         |
 | Secret   | `APPWRITE_RUNTIME_API_KEY`                                               | Worker-only rows, scanner execution, rejected/expired file cleanup, and expired device-token cleanup |
 | Secret   | `APPWRITE_RESTORE_DATA_API_KEY`                                          | Staging restore-drill CI only; row read/write for generated synthetic resources                      |
@@ -60,6 +61,8 @@ Configure the following independently on the staging and production GitHub envir
 | Variable | `APPWRITE_QUARANTINE_BUCKET_ID`, `APPWRITE_SCANNER_FUNCTION_ID`          | Private quarantine and scanner linkage                                                               |
 | Variable | `CLERK_ISSUER`, `CLERK_AUTHORIZED_PARTIES`                               | Exact Clerk issuer and accepted web origins                                                          |
 
+The expected Clerk issuer, stable web origin, authorized parties, checked definition, and development/production instance type are independently pinned in `infrastructure/clerk/environments.json`. The protected deploy rejects GitHub environment values that do not exactly match that reviewed map. It first checks the immutable Vercel deployment through its project-scoped automation-bypass credential, promotes or aliases only that verified deployment, and then repeats the check on the stable public origin with bounded propagation retries and no bypass credential.
+
 There is no publisher email or username allowlist. In `public` mode, publisher role assignment requires the stable GitHub external ID returned by Clerk; accounts without GitHub remain consumers. Require the intended Clerk verification/legal-consent flow, and use only immutable Clerk subjects in `ADMIN_CLERK_IDS` for administrators.
 
 `PACKAGE_SCOPE_GRANTS_JSON` is a required, nonblank, strict array of `{ "scope": "scope-without-at", "githubId": "stable-provider-id" }` entries. A scope may appear once, must use the canonical lowercase namespace grammar, and must not be reserved. Set it explicitly to `[]` unless the target has completed Clerk/GitHub sign-in and a reviewed read-only collision check confirms that neither another user's primary namespace nor another owner package already claims the scope. Missing, blank, malformed, ambiguous, or duplicate configuration stops deployment rendering and Worker configuration loading. Never substitute a username, email, wildcard, token capability, or administrator grant.
@@ -68,7 +71,7 @@ The CLI release workflow publishes `@lemonize/cli` with npm OIDC provenance. The
 
 ## What the deployment reconciles
 
-The workflow renders a temporary Wrangler configuration from protected variables and rejects an Appwrite project-ID mismatch with the selected checked-in definition. It does not compare every Cloudflare, Clerk, or Vercel identifier across GitHub environments, so the operator must verify those isolation checks. It pushes Appwrite TablesDB and Storage definitions before deploying the Worker. Read-only deployments skip rebuilding the artifact scanner because the publish path is disabled and cannot invoke it. Any deployment whose registry mode is not `read_only`, or whose public-publish flag is enabled, must build and activate the scanner successfully before the Worker can deploy.
+The workflow renders a temporary Wrangler configuration from protected variables and rejects an Appwrite project-ID mismatch with the selected checked-in definition. Clerk's public security policy and pinned environment identity are checked automatically; the operator must still verify the remaining Cloudflare and Vercel isolation checks. It pushes Appwrite TablesDB and Storage definitions before deploying the Worker. Read-only deployments skip rebuilding the artifact scanner because the publish path is disabled and cannot invoke it. Any deployment whose registry mode is not `read_only`, or whose public-publish flag is enabled, must build and activate the scanner successfully before the Worker can deploy.
 
 The scanner is reconciled to:
 

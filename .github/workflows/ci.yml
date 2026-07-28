@@ -150,3 +150,7 @@ jobs:
         run: node --test scripts/ops/package-scope-grants.test.mjs
       - name: Test production write approval matrix
         run: node --test scripts/ops/render-wrangler-config.test.mjs
+      - name: Test Clerk public deployment drift validation
+        run: node --test scripts/ops/verify-clerk-public-config.test.mjs
+      - name: Test Vercel release-integrity validation
+        run: node --test scripts/ops/vercel-release-integrity.test.mjs
