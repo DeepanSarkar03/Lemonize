@@ -301,64 +301,72 @@ try_identical_active_fallback() {
   return 0
 }
 
-deployment_file="$HOME/deployment.json"
-"$APPWRITE_BIN" --json functions create-deployment \
-  --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
-  --code "$deploy_dir" \
-  --activate true \
-  --entrypoint dist/main.js \
-  --commands "node --check dist/main.js" > "$deployment_file"
-
-deployment_id=$(node -e '
-  const fs = require("node:fs");
-  const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  if (!data.$id) process.exit(1);
-  process.stdout.write(data.$id);
-' "$deployment_file")
-
-for attempt in $(seq 1 60); do
-  status_file="$HOME/deployment-status.json"
-  "$APPWRITE_BIN" --json functions get-deployment \
+max_build_attempts=3
+for build_attempt in $(seq 1 "$max_build_attempts"); do
+  deployment_file="$HOME/deployment-$build_attempt.json"
+  "$APPWRITE_BIN" --json functions create-deployment \
     --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
-    --deployment-id "$deployment_id" > "$status_file"
-  status=$(node -e '
+    --code "$deploy_dir" \
+    --activate true \
+    --entrypoint dist/main.js \
+    --commands "node --check dist/main.js" > "$deployment_file"
+
+  deployment_id=$(node -e '
     const fs = require("node:fs");
     const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    process.stdout.write(data.status ?? "unknown");
-  ' "$status_file")
-  case "$status" in
-    ready)
-      verify_exact_variables ready
-      ready_function_file="$HOME/ready-function.json"
-      ready_verification_error="$HOME/ready-function-verification.log"
-      ready_verified_id=''
-      for config_attempt in $(seq 1 12); do
-        read_scanner_function "$ready_function_file"
-        if ready_verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
-          --function-only "$ready_function_file" "$deployment_id" \
-          "$APPWRITE_SCANNER_FUNCTION_ID" 2> "$ready_verification_error"); then
-          break
-        fi
+    if (!data.$id) process.exit(1);
+    process.stdout.write(data.$id);
+  ' "$deployment_file")
+
+  for status_attempt in $(seq 1 60); do
+    status_file="$HOME/deployment-status-$build_attempt.json"
+    "$APPWRITE_BIN" --json functions get-deployment \
+      --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
+      --deployment-id "$deployment_id" > "$status_file"
+    status=$(node -e '
+      const fs = require("node:fs");
+      const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      process.stdout.write(data.status ?? "unknown");
+    ' "$status_file")
+    case "$status" in
+      ready)
+        verify_exact_variables ready
+        ready_function_file="$HOME/ready-function.json"
+        ready_verification_error="$HOME/ready-function-verification.log"
         ready_verified_id=''
-        (( config_attempt == 12 )) || sleep 1
-      done
-      if [[ "$ready_verified_id" != "$deployment_id" ]]; then
-        cat "$ready_verification_error" >&2
-        echo "Ready scanner deployment did not become the exact live function configuration" >&2
-        exit 1
-      fi
-      if ! verify_active_secret "$deployment_id"; then
-        echo "Ready scanner deployment did not prove the configured signing secret" >&2
-        exit 1
-      fi
-      echo "Appwrite scanner deployment $deployment_id is ready"
-      exit 0
-      ;;
-    failed|canceled)
-      if [[ "$status" == failed ]] && try_identical_active_fallback "$status_file"; then
+        for config_attempt in $(seq 1 12); do
+          read_scanner_function "$ready_function_file"
+          if ready_verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
+            --function-only "$ready_function_file" "$deployment_id" \
+            "$APPWRITE_SCANNER_FUNCTION_ID" 2> "$ready_verification_error"); then
+            break
+          fi
+          ready_verified_id=''
+          (( config_attempt == 12 )) || sleep 1
+        done
+        if [[ "$ready_verified_id" != "$deployment_id" ]]; then
+          cat "$ready_verification_error" >&2
+          echo "Ready scanner deployment did not become the exact live function configuration" >&2
+          exit 1
+        fi
+        if ! verify_active_secret "$deployment_id"; then
+          echo "Ready scanner deployment did not prove the configured signing secret" >&2
+          exit 1
+        fi
+        echo "Appwrite scanner deployment $deployment_id is ready"
         exit 0
-      fi
-      node - "$status_file" <<'NODE' >&2
+        ;;
+      failed|canceled)
+        if [[ "$status" == failed ]] && try_identical_active_fallback "$status_file"; then
+          exit 0
+        fi
+        if [[ "$status" == failed && "$build_attempt" -lt "$max_build_attempts" ]] &&
+          node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
+            --build-log "$status_file"; then
+          echo "Appwrite artifact handoff failed; retrying exact scanner build ($build_attempt/$max_build_attempts)" >&2
+          continue 2
+        fi
+        node - "$status_file" <<'NODE' >&2
 const fs = require('node:fs');
 const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 let logs = typeof data.buildLogs === 'string' ? data.buildLogs : '';
@@ -375,15 +383,16 @@ const tail = logs
   .slice(-8_000);
 if (tail) process.stderr.write(`Appwrite build log tail:\n${tail}\n`);
 NODE
-      echo "Appwrite scanner deployment $deployment_id ended with status $status" >&2
-      exit 1
-      ;;
-    *)
-      if (( attempt == 60 )); then
-        echo "Timed out waiting for Appwrite scanner deployment $deployment_id (status $status)" >&2
+        echo "Appwrite scanner deployment $deployment_id ended with status $status" >&2
         exit 1
-      fi
-      sleep 5
-      ;;
-  esac
+        ;;
+      *)
+        if (( status_attempt == 60 )); then
+          echo "Timed out waiting for Appwrite scanner deployment $deployment_id (status $status)" >&2
+          exit 1
+        fi
+        sleep 5
+        ;;
+    esac
+  done
 done
