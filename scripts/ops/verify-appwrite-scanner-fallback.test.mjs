@@ -197,7 +197,7 @@ test('reconciles empty Appwrite arrays as JSON instead of bare CLI flags', async
   assert.equal(request.url, `https://fra.cloud.appwrite.io/v1/functions/${functionId}`);
   assert.equal(request.init.method, 'PUT');
   assert.equal(request.init.headers['x-appwrite-key'], apiKey);
-  assert.equal(request.init.headers['x-appwrite-response-format'], '1.8.1');
+  assert.equal(request.init.headers['x-appwrite-response-format'], '1.9.5');
   assert.deepEqual(JSON.parse(request.init.body), scannerFunctionConfiguration());
 
   let captured;
@@ -220,6 +220,12 @@ test('reconciles empty Appwrite arrays as JSON instead of bare CLI flags', async
     functionId,
     ...scannerFunctionConfiguration(),
   });
+
+  const get = buildScannerFunctionRequest({ ...options, command: 'get' });
+  assert.equal(get.url, `https://fra.cloud.appwrite.io/v1/functions/${functionId}`);
+  assert.equal(get.init.method, 'GET');
+  assert.equal(get.init.headers['x-appwrite-response-format'], '1.9.5');
+  assert.equal('body' in get.init, false);
 });
 
 test('Appwrite reconciliation validates destinations and redacts API errors', async () => {

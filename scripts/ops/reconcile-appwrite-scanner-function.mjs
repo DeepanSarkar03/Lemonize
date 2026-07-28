@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$/;
 const REQUEST_TIMEOUT_MS = 30_000;
+const RESPONSE_FORMAT = '1.9.5';
 
 function requireId(value, label) {
   if (typeof value !== 'string' || !ID_PATTERN.test(value)) {
@@ -45,8 +46,8 @@ export function scannerFunctionConfiguration() {
 }
 
 export function buildScannerFunctionRequest({ command, endpoint, projectId, apiKey, functionId }) {
-  if (command !== 'create' && command !== 'update') {
-    throw new Error('Scanner reconciliation command must be create or update');
+  if (command !== 'create' && command !== 'update' && command !== 'get') {
+    throw new Error('Scanner function command must be create, update, or get');
   }
   requireId(projectId, 'APPWRITE_PROJECT_ID');
   requireId(functionId, 'APPWRITE_SCANNER_FUNCTION_ID');
@@ -73,23 +74,28 @@ export function buildScannerFunctionRequest({ command, endpoint, projectId, apiK
     command === 'create'
       ? `${baseUrl}/functions`
       : `${baseUrl}/functions/${encodeURIComponent(functionId)}`;
-  const body = {
-    ...(command === 'create' ? { functionId } : {}),
-    ...scannerFunctionConfiguration(),
-  };
+  const body =
+    command === 'get'
+      ? undefined
+      : {
+          ...(command === 'create' ? { functionId } : {}),
+          ...scannerFunctionConfiguration(),
+        };
 
   return {
     url: resource,
     init: {
-      method: command === 'create' ? 'POST' : 'PUT',
+      method: command === 'create' ? 'POST' : command === 'update' ? 'PUT' : 'GET',
       headers: {
-        'content-type': 'application/json',
+        ...(body ? { 'content-type': 'application/json' } : {}),
         accept: 'application/json',
         'x-appwrite-project': projectId,
         'x-appwrite-key': apiKey,
-        'x-appwrite-response-format': '1.8.1',
+        // 1.8.1 omits the mutable build/runtime specification fields, so it
+        // cannot support the exact post-write verification required here.
+        'x-appwrite-response-format': RESPONSE_FORMAT,
       },
-      body: JSON.stringify(body),
+      ...(body ? { body: JSON.stringify(body) } : {}),
       redirect: 'error',
     },
   };
@@ -110,7 +116,7 @@ export async function reconcileScannerFunction(options, fetchImpl = fetch) {
       .trim()
       .slice(0, 2_000);
     throw new Error(
-      `Appwrite function reconciliation failed with HTTP ${response.status}${
+      `Appwrite function request failed with HTTP ${response.status}${
         safeMessage ? `: ${safeMessage}` : ''
       }`,
     );
@@ -120,13 +126,13 @@ export async function reconcileScannerFunction(options, fetchImpl = fetch) {
   try {
     result = JSON.parse(responseText);
   } catch {
-    throw new Error('Appwrite function reconciliation returned malformed JSON');
+    throw new Error('Appwrite function request returned malformed JSON');
   }
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
-    throw new Error('Appwrite function reconciliation returned an invalid object');
+    throw new Error('Appwrite function request returned an invalid object');
   }
   if (result.$id !== options.functionId) {
-    throw new Error('Appwrite reconciled a different function than requested');
+    throw new Error('Appwrite returned a different function than requested');
   }
   return result;
 }
