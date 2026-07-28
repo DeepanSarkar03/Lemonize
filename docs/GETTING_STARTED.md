@@ -77,7 +77,7 @@ For each environment:
 2. Require the intended account verification and legal-consent flow, then configure the web origin and redirect/callback URLs for that environment only.
 3. Set `CLERK_ISSUER` to the exact token issuer and `CLERK_AUTHORIZED_PARTIES` to exact web origins with no paths.
 4. Store `CLERK_SECRET_KEY` only as a Worker secret.
-5. Configure and test GitHub OAuth. Public publisher eligibility requires Clerk to return a stable GitHub external ID; an account without GitHub remains a consumer.
+5. Optionally configure and test GitHub OAuth. Every verified account can publish public packages in public mode; a stable GitHub external ID is required only for an additional scope listed in `PACKAGE_SCOPE_GRANTS_JSON`.
 6. If administrators are needed, set `ADMIN_CLERK_IDS` to exact immutable Clerk subject IDs. Email addresses and GitHub usernames are not administrator identifiers.
 
 The production Clerk instance is provisioned behind `https://clerk.lemonize.cyou`; its custom domains, TLS/JWKS, mail DNS, and public GitHub OAuth configuration are present. Do not consider production authentication launch-ready until email delivery, first-user GitHub sign-in and callback handling, lockout, linking, legal consent, active-user lookup, and manual device approval pass end-to-end.
@@ -119,7 +119,7 @@ lem login
 lem info @your-namespace/example
 ```
 
-For a GitHub-linked public publisher that has accepted the current terms:
+For a verified public publisher that has accepted the current terms:
 
 ```bash
 cd path/to/package

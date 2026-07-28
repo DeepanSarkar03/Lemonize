@@ -10,25 +10,40 @@ import { PUBLISH_QUOTAS } from '../lib/publish-security.js';
 
 export const meta = new Hono<AppBindings>();
 
+export function publicPackageSearchQueries(): string[] {
+  return [
+    AppwriteQuery.equal('status', ['active', 'published']),
+    // Apply visibility and publication predicates in Appwrite before the
+    // result limit. Otherwise private or never-published rows can crowd all
+    // public matches out of the first page. Null covers rows created before
+    // the visibility column existed; new rows use the public default.
+    AppwriteQuery.or([
+      AppwriteQuery.equal('visibility', 'public'),
+      AppwriteQuery.isNull('visibility'),
+    ]),
+    AppwriteQuery.greaterThan('publishedVersionCount', 0),
+    AppwriteQuery.orderDesc('$updatedAt'),
+    AppwriteQuery.limit(50),
+  ];
+}
+
 meta.get('/limits', (c) => {
   const cfg = c.get('config');
   c.header('cache-control', 'no-store');
   return c.json({
-    maxTarballSizeBytes: Math.min(
-      cfg.maxTarballSizeBytes,
-      PUBLISH_QUOTAS.maxTarballSizeBytes,
-    ),
+    maxTarballSizeBytes: Math.min(cfg.maxTarballSizeBytes, PUBLISH_QUOTAS.maxTarballSizeBytes),
     maxPackageFiles: cfg.maxPackageFiles,
     maxGlobalArtifactBytes: cfg.maxGlobalArtifactBytes,
     rateLimitReadsPerMinute: cfg.rateLimitReadsPerMinute,
     rateLimitWritesPerMinute: cfg.rateLimitWritesPerMinute,
     allowPublicPublish: cfg.allowPublicPublish,
     allowPrivatePackages: cfg.allowPrivatePackages,
+    privatePackagesPaid: true,
     registryBaseUrl: cfg.registryBaseUrl,
     registryMode: cfg.registryMode,
     publishRestricted: cfg.registryMode !== 'public',
     openSignup: cfg.registryMode === 'public',
-    publisherEligibility: 'github_linked',
+    publisherEligibility: 'authenticated',
     quotas: {
       packages: PUBLISH_QUOTAS.maxPackages,
       versionsPerPackage: PUBLISH_QUOTAS.maxVersionsPerPackage,
@@ -47,11 +62,7 @@ meta.get('/search', async (c) => {
   const repo = registryAppwriteRepository(c.env);
   const rows = await repo.searchPackages(q, {
     total: false,
-    queries: [
-      AppwriteQuery.equal('status', ['active', 'published']),
-      AppwriteQuery.orderDesc('$updatedAt'),
-      AppwriteQuery.limit(50),
-    ],
+    queries: publicPackageSearchQueries(),
   });
   const results = rows.rows.filter(isPublicPackage).map((pkg) => ({
     name: pkg.name,

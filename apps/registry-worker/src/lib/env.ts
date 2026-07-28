@@ -1,13 +1,6 @@
-import type {
-  DurableObjectNamespace,
-  KVNamespace,
-  R2Bucket,
-} from '@cloudflare/workers-types';
+import type { DurableObjectNamespace, KVNamespace, R2Bucket } from '@cloudflare/workers-types';
 import { stripTrailingSlashes } from './url.js';
-import {
-  parsePackageScopeGrants,
-  type PackageScopeGrant,
-} from './package-scope-grants.js';
+import { parsePackageScopeGrants, type PackageScopeGrant } from './package-scope-grants.js';
 
 export interface Env {
   KV: KVNamespace;
@@ -40,6 +33,7 @@ export interface Env {
 
   CLERK_ISSUER: string;
   CLERK_AUTHORIZED_PARTIES: string;
+  CLERK_PRIVATE_PACKAGES_FEATURE: string;
   CLERK_SECRET_KEY: string;
   SCANNER_SHARED_SECRET: string;
 }
@@ -65,6 +59,7 @@ export interface Config {
   packageScopeGrants: PackageScopeGrant[];
   clerkIssuer: string;
   clerkAuthorizedParties: string[];
+  privatePackagesFeature: string;
 }
 
 const bool = (v: string | undefined, d = false) =>
@@ -84,10 +79,16 @@ export function loadConfig(env: Env): Config {
     env.REGISTRY_MODE === 'public' || env.REGISTRY_MODE === 'invite_only'
       ? env.REGISTRY_MODE
       : 'read_only';
+  const privatePackagesFeature = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(
+    env.CLERK_PRIVATE_PACKAGES_FEATURE || '',
+  )
+    ? env.CLERK_PRIVATE_PACKAGES_FEATURE
+    : '';
   return {
     // An omitted or malformed deployment variable must never turn writes on.
     allowPublicPublish: bool(env.ALLOW_PUBLIC_PUBLISH, false),
-    allowPrivatePackages: bool(env.ALLOW_PRIVATE_PACKAGES, false),
+    allowPrivatePackages:
+      bool(env.ALLOW_PRIVATE_PACKAGES, false) && Boolean(privatePackagesFeature),
     maxTarballSizeBytes: int(env.MAX_TARBALL_SIZE_BYTES, 10 * 1024 * 1024),
     maxUnpackedSizeBytes: int(env.MAX_UNPACKED_SIZE_BYTES, 104857600),
     maxPackageFiles: int(env.MAX_PACKAGE_FILES, 2000),
@@ -107,6 +108,7 @@ export function loadConfig(env: Env): Config {
     packageScopeGrants: parsePackageScopeGrants(env.PACKAGE_SCOPE_GRANTS_JSON),
     clerkIssuer: stripTrailingSlashes(env.CLERK_ISSUER || ''),
     clerkAuthorizedParties: list(env.CLERK_AUTHORIZED_PARTIES),
+    privatePackagesFeature,
   };
 }
 

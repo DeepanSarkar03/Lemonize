@@ -34,7 +34,7 @@ lem login
 
 The CLI prints `/login` and a short display code, then polls for up to ten minutes. Sign in through Clerk and manually type the exact code shown by your own terminal. The code is intentionally not embedded in the URL.
 
-The Worker verifies the Clerk session and active account before returning a 30-day Lemonize API token. Active accounts linked to GitHub receive public-publisher scopes (`read`, `publish`, `manage:packages`, and `manage:tokens`); accounts without GitHub receive `read` and `manage:tokens`. Publishing also requires acceptance of the current terms and a write-enabled registry. The raw token is stored per normalized registry URL in `~/.lemonize/config.json` with mode `0600` where the filesystem supports it.
+The Worker verifies the Clerk session and active account before returning a 30-day Lemonize API token. In public mode, every active account receives public-publisher scopes (`read`, `publish`, `manage:packages`, and `manage:tokens`); invite-only consumers receive `read` and `manage:tokens`. Publishing also requires acceptance of the current terms and a write-enabled registry. Private packages additionally require the account owner's current paid Clerk entitlement. The raw token is stored per normalized registry URL in `~/.lemonize/config.json` with mode `0600` where the filesystem supports it.
 
 `lem login --username <name>` remains as a client compatibility option, but the server ignores that value for identity. A username is never proof of authentication.
 

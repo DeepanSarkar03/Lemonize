@@ -146,6 +146,10 @@ jobs:
         run: bash scripts/ops/appwrite-restore-drill.test.sh
       - name: Test additive Appwrite schema reconciliation
         run: node --test scripts/ops/reconcile-appwrite-schema.test.mjs
+      - name: Test scanner fallback identity and source verification
+        run: node --test scripts/ops/verify-appwrite-scanner-fallback.test.mjs
+      - name: Test fail-closed legacy package migration
+        run: node --test scripts/migrate-d1-to-appwrite.test.mjs
       - name: Test package-scope grant deployment validation
         run: node --test scripts/ops/package-scope-grants.test.mjs
       - name: Test production write approval matrix

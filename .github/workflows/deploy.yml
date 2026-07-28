@@ -171,6 +171,7 @@ jobs:
           APPWRITE_SCANNER_FUNCTION_ID: ${{ vars.APPWRITE_SCANNER_FUNCTION_ID }}
           CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
           CLERK_AUTHORIZED_PARTIES: ${{ vars.CLERK_AUTHORIZED_PARTIES }}
+          CLERK_PRIVATE_PACKAGES_FEATURE: ${{ vars.CLERK_PRIVATE_PACKAGES_FEATURE }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
           NPM_PROXY_BASE_URL: ${{ vars.NPM_PROXY_BASE_URL }}
@@ -183,11 +184,12 @@ jobs:
             CORS_ALLOWED_ORIGINS PACKAGE_SCOPE_GRANTS_JSON REGISTRY_MODE APPWRITE_ENDPOINT \
             APPWRITE_PROJECT_ID APPWRITE_DATABASE_ID APPWRITE_QUARANTINE_BUCKET_ID \
             APPWRITE_SCANNER_FUNCTION_ID CLERK_ISSUER CLERK_AUTHORIZED_PARTIES \
+            CLERK_PRIVATE_PACKAGES_FEATURE \
             VERCEL_ORG_ID VERCEL_PROJECT_ID NPM_PROXY_BASE_URL
           node scripts/ops/verify-appwrite-config.mjs "$DEPLOY_ENV"
           node scripts/ops/verify-clerk-public-config.mjs \
             "$DEPLOY_ENV" "$CLERK_ISSUER" "$WEB_BASE_URL" \
-            "$CLERK_AUTHORIZED_PARTIES" --pins-only
+            "$CLERK_AUTHORIZED_PARTIES"
           node scripts/ops/render-wrangler-config.mjs "$RUNNER_TEMP/wrangler.json"
           pnpm --filter @lemonize/registry-worker exec wrangler deploy \
             --config "$RUNNER_TEMP/wrangler.json" --dry-run \
@@ -210,14 +212,16 @@ jobs:
       - name: Reconcile and deploy Appwrite artifact scanner
         # The scanner is reachable only from the publish finalization path.
         # Keep read-only releases independent of Appwrite's build service, but
-        # require a fresh successful scanner deployment before any environment
-        # can accept writes.
+        # require a fresh scanner deployment, or byte-verified reuse of the
+        # already-active candidate after Appwrite's exact artifact-handoff
+        # failure, before any environment can accept writes.
         if: ${{ vars.REGISTRY_MODE != 'read_only' || vars.ALLOW_PUBLIC_PUBLISH == 'true' }}
         env:
           APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
           APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
           APPWRITE_DEPLOY_API_KEY: ${{ secrets.APPWRITE_DEPLOY_API_KEY }}
           APPWRITE_SCANNER_FUNCTION_ID: ${{ vars.APPWRITE_SCANNER_FUNCTION_ID }}
+          APPWRITE_SCANNER_FALLBACK_DEPLOYMENT_ID: ${{ vars.APPWRITE_SCANNER_FALLBACK_DEPLOYMENT_ID }}
           APPWRITE_QUARANTINE_BUCKET_ID: ${{ vars.APPWRITE_QUARANTINE_BUCKET_ID }}
           REGISTRY_BASE_URL: ${{ vars.REGISTRY_BASE_URL }}
           SCANNER_SHARED_SECRET: ${{ secrets.SCANNER_SHARED_SECRET }}

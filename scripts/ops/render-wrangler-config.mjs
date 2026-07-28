@@ -33,6 +33,7 @@ const required = [
   'APPWRITE_SCANNER_FUNCTION_ID',
   'CLERK_ISSUER',
   'CLERK_AUTHORIZED_PARTIES',
+  'CLERK_PRIVATE_PACKAGES_FEATURE',
 ];
 
 const missing = required.filter((name) => !process.env[name]);
@@ -125,6 +126,9 @@ const clerkIssuer = new URL(process.env.CLERK_ISSUER);
 if (clerkIssuer.protocol !== 'https:' || clerkIssuer.origin !== process.env.CLERK_ISSUER) {
   throw new Error('CLERK_ISSUER must be an exact HTTPS origin');
 }
+if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(process.env.CLERK_PRIVATE_PACKAGES_FEATURE)) {
+  throw new Error('CLERK_PRIVATE_PACKAGES_FEATURE must be a lowercase Clerk feature slug');
+}
 for (const name of [
   'APPWRITE_PROJECT_ID',
   'APPWRITE_DATABASE_ID',
@@ -197,6 +201,7 @@ const config = {
     APPWRITE_SCANNER_FUNCTION_ID: process.env.APPWRITE_SCANNER_FUNCTION_ID,
     CLERK_ISSUER: process.env.CLERK_ISSUER,
     CLERK_AUTHORIZED_PARTIES: process.env.CLERK_AUTHORIZED_PARTIES,
+    CLERK_PRIVATE_PACKAGES_FEATURE: process.env.CLERK_PRIVATE_PACKAGES_FEATURE,
   },
   kv_namespaces: [{ binding: 'KV', id: process.env.CF_KV_NAMESPACE_ID }],
   r2_buckets: [{ binding: 'BUCKET', bucket_name: process.env.CF_R2_BUCKET }],

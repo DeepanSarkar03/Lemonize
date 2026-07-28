@@ -84,6 +84,7 @@ export interface LimitsResponse {
   rateLimitWritesPerMinute: number;
   allowPublicPublish: boolean;
   allowPrivatePackages: boolean;
+  privatePackagesPaid?: boolean;
   registryBaseUrl: string;
   /** Single-publisher registries set this true; only the owner may publish. */
   publishRestricted?: boolean;

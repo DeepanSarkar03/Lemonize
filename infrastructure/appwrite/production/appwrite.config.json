@@ -395,6 +395,15 @@
                     "encrypt": false
                 },
                 {
+                    "key": "visibility",
+                    "type": "varchar",
+                    "required": false,
+                    "array": false,
+                    "size": 16,
+                    "default": "public",
+                    "encrypt": false
+                },
+                {
                     "key": "description",
                     "type": "varchar",
                     "required": false,
@@ -477,11 +486,29 @@
                     "orders": []
                 },
                 {
+                    "key": "packages_visibility",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "visibility"
+                    ],
+                    "orders": []
+                },
+                {
                     "key": "packages_status",
                     "type": "key",
                     "status": "available",
                     "columns": [
                         "status"
+                    ],
+                    "orders": []
+                },
+                {
+                    "key": "packages_published_count",
+                    "type": "key",
+                    "status": "available",
+                    "columns": [
+                        "publishedVersionCount"
                     ],
                     "orders": []
                 },

@@ -13,21 +13,22 @@ export function roleForAccount(
 ): RegistryRole {
   if (config.adminClerkIds.includes(input.clerkId)) return 'admin';
 
-  // Public eligibility follows proof that the Clerk account controls a GitHub
-  // account. The external account id is stable when usernames and emails move.
-  if (input.githubId) {
-    if (config.registryMode === 'public' || config.registryMode === 'read_only') {
-      return 'publisher';
-    }
-    // Invite-only remains useful as a rollout gate for already-approved rows.
-    if (input.existingRole === 'publisher') return 'publisher';
+  // Every active Clerk account is eligible for public publishing in public
+  // mode. Read-only keeps the same role assignment so enabling the global
+  // write circuit breaker never requires an account migration. GitHub remains
+  // optional profile data and can authorize explicitly configured extra
+  // package scopes, but it is no longer a prerequisite for the user's own
+  // immutable namespace.
+  if (config.registryMode === 'public' || config.registryMode === 'read_only') {
+    return 'publisher';
   }
+
+  // Invite-only remains useful as an operator-controlled rollout gate.
+  if (input.existingRole === 'publisher') return 'publisher';
   return 'consumer';
 }
 
-export function hasCurrentTerms(input: {
-  acceptedTermsVersion?: string | null;
-}): boolean {
+export function hasCurrentTerms(input: { acceptedTermsVersion?: string | null }): boolean {
   return input.acceptedTermsVersion === CURRENT_TERMS_VERSION;
 }
 

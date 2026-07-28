@@ -20,7 +20,7 @@ function Invoke-D1Query([string]$Sql) {
 
 $source = @{
   users = @(Invoke-D1Query 'SELECT id, username, email FROM users ORDER BY id')
-  packages = @(Invoke-D1Query 'SELECT id, name, normalized_name, scope, owner_user_id, description, readme, latest_version, deleted_at FROM packages ORDER BY id')
+  packages = @(Invoke-D1Query 'SELECT id, name, normalized_name, scope, owner_user_id, description, readme, visibility, latest_version, deleted_at FROM packages ORDER BY id')
   versions = @(Invoke-D1Query 'SELECT id, package_id, version, tarball_key, integrity, shasum, unpacked_size, tarball_size, file_count, manifest_json, published_by, published_at, deprecated_message, yanked_at FROM package_versions ORDER BY id')
   tags = @(Invoke-D1Query 'SELECT id, package_id, tag, version FROM dist_tags ORDER BY id')
 }

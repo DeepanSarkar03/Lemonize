@@ -21,7 +21,7 @@ lem add @demo/utils --source lemonize
 lem install
 ```
 
-Publishing requires a Clerk account linked to a verified GitHub identity, acceptance of the current terms, a scoped API token, and a package name in that account's Lemonize namespace:
+Publishing requires a verified Clerk account, acceptance of the current terms, a scoped API token, and a package name in that account's immutable Lemonize namespace. GitHub linking is optional unless an operator grants an additional GitHub-bound scope:
 
 ```bash
 lem login
@@ -65,7 +65,7 @@ flowchart LR
 | Workers KV                    | Revocation acceleration and metadata cache; never authoritative                                                      |
 | Durable Objects               | Atomic device approvals, registry rate limits, and per-client/global npm-origin admission budgets                    |
 | Appwrite function and Storage | Bounded archive validation, antivirus quarantine, and retained accepted recovery copy                                |
-| Clerk                         | Browser identity, active-account status, verified sign-in policy, and GitHub publisher eligibility                   |
+| Clerk                         | Browser identity, active-account status, verified sign-in policy, and paid private-package entitlements              |
 | npm proxy Worker              | Read-only npm route allowlist, edge cache, origin admission budgets, and exact upstream tarball passthrough          |
 
 There is no D1 binding or D1 query on the current runtime path. D1-related files that remain in the repository exist only to read and migrate the legacy registry; Cloudflare bootstrap creates KV and R2 resources only.
@@ -79,9 +79,9 @@ There is no D1 binding or D1 query on the current runtime path. D1-related files
 3. The Worker verifies the Clerk JWT against the configured issuer, remote JWKS, expiry, and exact authorized-party origin, then checks the Clerk user is still active.
 4. The Worker stores a 120-second approval in a per-code Durable Object. A transaction makes the approval single-use across regions; the successful poll returns a 30-day Lemonize API token.
 
-The CLI-supplied username is never trusted. In `public` mode, an active Clerk account with a linked GitHub external ID becomes a publisher; accounts without GitHub remain consumers. Administrator authority is assigned only by immutable Clerk subject IDs in `ADMIN_CLERK_IDS`. Clerk must require its configured verification and legal-consent flow.
+The CLI-supplied username is never trusted. In `public` mode, every active Clerk account is eligible to publish public packages after accepting the current terms. Administrator authority is assigned only by immutable Clerk subject IDs in `ADMIN_CLERK_IDS`. GitHub remains optional profile data and can authorize explicitly configured additional scopes by stable external ID.
 
-API tokens are opaque `lem_live_` credentials. Only their SHA-256 digests are stored in TablesDB. Supported scopes are `read`, `publish`, `manage:packages`, and `manage:tokens`; publish and management routes enforce their scopes in addition to package ownership and the user's current role. `read` is currently descriptive/reserved because public reads and `/auth/me` do not gate on it. Login/device tokens are independent roots. A root may create 1-90 day children with narrower scopes and expiry, but children cannot receive `manage:tokens` or delegate again. Child authentication revalidates the root, root revocation cascades to its children, and API-token lifecycle operations cannot cross into a sibling root. A fresh Clerk session retains account-wide token control.
+API tokens are opaque `lem_live_` credentials. Only their SHA-256 digests are stored in TablesDB. Supported scopes are `read`, `publish`, `manage:packages`, and `manage:tokens`; private reads, publishing, and management routes enforce their respective scopes in addition to package ownership and the user's current role. Public package reads and `/auth/me` remain available without the `read` capability. Login/device tokens are independent roots. A root may create 1-90 day children with narrower scopes and expiry, but children cannot receive `manage:tokens` or delegate again. Child authentication revalidates the root, root revocation cascades to its children, and API-token lifecycle operations cannot cross into a sibling root. A fresh Clerk session retains account-wide token control.
 
 ## Publication safety
 
@@ -136,16 +136,9 @@ Use separate dev, staging, and production Cloudflare, Appwrite, Clerk, and Verce
 
 Staging is live at `https://lemonize-staging.vercel.app`; the staging native registry and npm proxy are live at `registry-staging.lemonize.cyou` and `npm-staging.lemonize.cyou`. Clean-cache npm, pnpm, and Yarn installs pass through the proxy. Staging and production use separate Vercel projects, Appwrite projects and keys, Cloudflare resources, and Clerk instances. The Appwrite schema and hardened scanner revision are deployed in both environments, daily seven-day backup policies are enabled, and the protected Node 24 CI release passed all required checks.
 
-Production remains `REGISTRY_MODE=read_only` with `ALLOW_PUBLIC_PUBLISH=false`. The remaining external setup and launch blockers are:
+The protected public-publishing cutover is staged behind `REGISTRY_MODE` and `ALLOW_PUBLIC_PUBLISH`; writes remain disabled until this revision passes the staging deployment and publish canary. Once enabled, every active authenticated account can publish after accepting the current terms; GitHub linking is optional unless an operator grants an additional package scope. The npm proxy at `npm.lemonize.cyou` remains a separate read-only edge cache for upstream npm packages.
 
-- exercise the provisioned production Clerk environment end-to-end: verify email delivery, first-user GitHub sign-in and callback handling, lockout, linking, legal consent, active-user lookup, and manual device approval;
-- sign in once as the owner and set the resulting immutable Clerk subject in `ADMIN_CLERK_IDS`, then test emergency security blocking;
-- obtain narrow Cloudflare DNS/WAF authority missing from the current OAuth session, create the pre-Worker abuse rules, deploy and resolve `npm.lemonize.cyou`, and record passing rate-limit tests;
-- create long-lived, least-privilege Cloudflare and project-scoped Vercel CI tokens. The current OAuth sessions can deploy interactively but cannot mint the required CI tokens;
-- authenticate an npm owner, create/verify the public `@lemonize` organization/package, and configure trusted publishing for `@lemonize/cli`;
-- complete the GitHub-linked staging sign-in, terms, device approval, publish, clean/rejected scan, security-block, and restore drills. Initial Appwrite archives have been requested but are not considered verified until they complete and a non-production restore passes.
-
-Do not enable production writes to work around any of these blockers.
+Paid private-package code is deployed fail-closed but the feature flag remains off while the connected Stripe account is pending and no Clerk plan has been priced. Before enabling it, finish Stripe onboarding, create a recurring paid Clerk user plan with the `private-packages` feature, and pass checkout, cancellation, past-due, owner/non-owner, and cache-isolation drills. The non-production restore drill also remains a release-readiness follow-up.
 
 ## Documentation
 

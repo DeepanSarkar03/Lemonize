@@ -57,6 +57,8 @@ export interface PackageData {
   normalizedName: string;
   scope: string;
   ownerId: string;
+  /** Missing legacy values are treated as public. */
+  visibility?: 'public' | 'private' | null;
   description?: string | null;
   readme?: string | null;
   status: string;

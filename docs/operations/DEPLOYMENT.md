@@ -36,7 +36,7 @@ Configure the following independently on the staging and production GitHub envir
 | Secret   | `CLOUDFLARE_API_TOKEN`                                                   | Least-privilege deployment token for the matching Worker, secrets, bindings, and route               |
 | Secret   | `CLOUDFLARE_ACCOUNT_ID`                                                  | Cloudflare account selected by Wrangler                                                              |
 | Secret   | `VERCEL_TOKEN`                                                           | Token scoped to the matching Vercel project/team                                                     |
-| Secret   | `VERCEL_AUTOMATION_BYPASS_SECRET`                                         | Per-project credential used only to verify the exact protected deployment before promotion           |
+| Secret   | `VERCEL_AUTOMATION_BYPASS_SECRET`                                        | Per-project credential used only to verify the exact protected deployment before promotion           |
 | Secret   | `APPWRITE_DEPLOY_API_KEY`                                                | CI-only TablesDB/schema, bucket, and function administration                                         |
 | Secret   | `APPWRITE_RUNTIME_API_KEY`                                               | Worker-only rows, scanner execution, rejected/expired file cleanup, and expired device-token cleanup |
 | Secret   | `APPWRITE_RESTORE_DATA_API_KEY`                                          | Staging restore-drill CI only; row read/write for generated synthetic resources                      |
@@ -50,6 +50,7 @@ Configure the following independently on the staging and production GitHub envir
 | Variable | `REGISTRY_BASE_URL`, `WEB_BASE_URL`                                      | Exact HTTPS public origins                                                                           |
 | Variable | `CORS_ALLOWED_ORIGINS`                                                   | Exact comma-separated origins; never `*` in production                                               |
 | Variable | `ALLOW_PUBLIC_PUBLISH`, `ALLOW_PRIVATE_PACKAGES`                         | Explicit feature booleans                                                                            |
+| Variable | `CLERK_PRIVATE_PACKAGES_FEATURE`                                         | Clerk Billing feature slug required by a non-free active user plan                                   |
 | Variable | `MAX_TARBALL_SIZE_BYTES`, `MAX_UNPACKED_SIZE_BYTES`, `MAX_PACKAGE_FILES` | Positive integer archive limits                                                                      |
 | Variable | `MAX_GLOBAL_ARTIFACT_BYTES`                                              | Serialized total published-and-reserved ceiling; <=70% of lower storage entitlement and <=7 GiB      |
 | Variable | `RATE_LIMIT_READS_PER_MINUTE`, `RATE_LIMIT_WRITES_PER_MINUTE`            | Positive integer rate limits                                                                         |
@@ -59,11 +60,12 @@ Configure the following independently on the staging and production GitHub envir
 | Variable | `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`                                     | Exact Vercel project linkage                                                                         |
 | Variable | `APPWRITE_ENDPOINT`, `APPWRITE_PROJECT_ID`, `APPWRITE_DATABASE_ID`       | Exact Appwrite endpoint/project/TablesDB linkage                                                     |
 | Variable | `APPWRITE_QUARANTINE_BUCKET_ID`, `APPWRITE_SCANNER_FUNCTION_ID`          | Private quarantine and scanner linkage                                                               |
+| Variable | `APPWRITE_SCANNER_FALLBACK_DEPLOYMENT_ID`                                | Optional active, ready deployment pin for byte-identical artifact-handoff recovery                   |
 | Variable | `CLERK_ISSUER`, `CLERK_AUTHORIZED_PARTIES`                               | Exact Clerk issuer and accepted web origins                                                          |
 
 The expected Clerk issuer, stable web origin, authorized parties, checked definition, and development/production instance type are independently pinned in `infrastructure/clerk/environments.json`. The protected deploy rejects GitHub environment values that do not exactly match that reviewed map. It first checks the immutable Vercel deployment through its project-scoped automation-bypass credential, promotes or aliases only that verified deployment, and then repeats the check on the stable public origin with bounded propagation retries and no bypass credential.
 
-There is no publisher email or username allowlist. In `public` mode, publisher role assignment requires the stable GitHub external ID returned by Clerk; accounts without GitHub remain consumers. Require the intended Clerk verification/legal-consent flow, and use only immutable Clerk subjects in `ADMIN_CLERK_IDS` for administrators.
+There is no publisher email or username allowlist. In `public` mode, every active Clerk account is publisher-eligible after accepting the current terms. Require the intended Clerk verification/legal-consent flow, and use only immutable Clerk subjects in `ADMIN_CLERK_IDS` for administrators. GitHub external IDs authorize only reviewed additional scope grants.
 
 `PACKAGE_SCOPE_GRANTS_JSON` is a required, nonblank, strict array of `{ "scope": "scope-without-at", "githubId": "stable-provider-id" }` entries. A scope may appear once, must use the canonical lowercase namespace grammar, and must not be reserved. Set it explicitly to `[]` unless the target has completed Clerk/GitHub sign-in and a reviewed read-only collision check confirms that neither another user's primary namespace nor another owner package already claims the scope. Missing, blank, malformed, ambiguous, or duplicate configuration stops deployment rendering and Worker configuration loading. Never substitute a username, email, wildcard, token capability, or administrator grant.
 
@@ -71,14 +73,14 @@ The CLI release workflow publishes `@lemonize/cli` with npm OIDC provenance. The
 
 ## What the deployment reconciles
 
-The workflow renders a temporary Wrangler configuration from protected variables and rejects an Appwrite project-ID mismatch with the selected checked-in definition. Clerk's public security policy and pinned environment identity are checked automatically; the operator must still verify the remaining Cloudflare and Vercel isolation checks. It pushes Appwrite TablesDB and Storage definitions before deploying the Worker. Read-only deployments skip rebuilding the artifact scanner because the publish path is disabled and cannot invoke it. Any deployment whose registry mode is not `read_only`, or whose public-publish flag is enabled, must build and activate the scanner successfully before the Worker can deploy.
+The workflow renders a temporary Wrangler configuration from protected variables and rejects an Appwrite project-ID mismatch with the selected checked-in definition. Clerk's public security policy and pinned environment identity are checked automatically; the operator must still verify the remaining Cloudflare and Vercel isolation checks. It pushes Appwrite TablesDB and Storage definitions before deploying the Worker. Read-only deployments skip rebuilding the artifact scanner because the publish path is disabled and cannot invoke it. Any deployment whose registry mode is not `read_only`, or whose public-publish flag is enabled, must build and activate the scanner successfully before the Worker can deploy. If Appwrite reports the exact post-build `Build produced no output artifact.` handoff failure, the workflow may retain the environment's pinned active deployment only after downloading its source and proving that its function identity, runtime, active status, file set, and every file digest exactly match the candidate. Other scanner failures remain blocking.
 
 The scanner is reconciled to:
 
 - Appwrite Node 25 runtime;
 - no public execute role;
 - `files.read` and `files.write` execution scopes only;
-- Appwrite's short-lived injected execution key, with legacy static Appwrite variables removed;
+- Appwrite's short-lived injected execution key, zero project-level variables, and an exact six-key function-variable allowlist; the HMAC value is secret and unexpected values such as `NODE_OPTIONS`, proxy settings, or legacy static Appwrite credentials are deleted;
 - a private antivirus-enabled quarantine bucket;
 - a locally built dependency-free `dist` created under the frozen pnpm lock, validated in Appwrite with `node --check` and no remote npm resolution;
 - a fresh deployment with bounded retention and a matching HMAC secret.
@@ -96,7 +98,7 @@ The npm proxy is deployed from its checked environment configuration with `NPM_P
 3. Dispatch that SHA to `staging`.
 4. Confirm `/ready` reports Appwrite, KV, and R2 healthy, and check `/v1/limits`.
 5. Run `lem login`. Sign in through staging Clerk, manually enter the terminal code, and confirm the returned token has only the expected scopes.
-6. Verify an account without GitHub receives consumer scopes and cannot publish. Verify a GitHub-linked account receives public-publisher capability only after accepting the current terms and while staging is `public` with publishing enabled. Check deterministic collision suffixing and namespace freeze after first ownership.
+6. Verify accounts with and without GitHub receive public-publisher capability only after accepting the current terms and while staging is `public` with publishing enabled. Check deterministic namespace collision suffixing and namespace freeze after first ownership.
 7. Publish a namespace-scoped fixture and observe reservation, private staging upload, scan job, Appwrite scanner execution/quarantine, signed clean callback, immutable R2 promotion, retained clean Appwrite copy, metadata, download, and CLI SHA-512/SHA-256 verification.
 8. Exercise malformed archive, hash mismatch, timeout, revoked token, locked Clerk account, wrong namespace, reused version, per-account/global quota rejection, new-version rejection for a legacy unscoped package, and non-admin unscoped maintenance rejection. Test soft-yank in mutable staging, then confirm `read_only` rejects it too.
 9. Exercise the npm proxy supported routes, unsupported read `404`, mutation `405`, free-mode large-packument passthrough, 16 MiB cap, full-cache and Range behavior, origin-budget `429`, admission failure `503`, and hostname-scoped WAF policy.
@@ -129,6 +131,6 @@ Write enablement is a separate change with a separate approval. Complete the ste
 8. Confirm rollback owners, commands, last-known-good versions, monitoring, and budget thresholds. Verify `MAX_GLOBAL_ARTIFACT_BYTES` is no more than 70% of the lower current R2/Appwrite entitlement, never more than 7 GiB, and remains at the conservative 1 GiB default if entitlement evidence is incomplete.
 9. Obtain narrow Cloudflare DNS/WAF authority, resolve and smoke-test `npm.lemonize.cyou`, verify its WAF rule IDs and Durable Object origin admission, and confirm the proxy can be disabled without affecting native registry reads.
 10. Authenticate an npm owner and confirm the npm organization/trusted-publisher relationship without adding a long-lived npm credential.
-11. Obtain explicit production write approval. Change `REGISTRY_MODE` to `public` and `ALLOW_PUBLIC_PUBLISH` to `true` in one reviewed protected-environment change, deploy, and immediately run a GitHub-linked namespace-scoped canary publish.
+11. Obtain explicit production write approval. Change `REGISTRY_MODE` to `public` and `ALLOW_PUBLIC_PUBLISH` to `true` in one reviewed protected-environment change, deploy, and immediately run namespace-scoped canary publishes for accounts with and without GitHub.
 
 If any count, identity, digest, provider setting, or blocker is unresolved, keep the new registry read-only. A zero active-token count observed before the freeze is not proof of a freeze; enforcement must precede the final snapshot.
