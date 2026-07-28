@@ -148,3 +148,5 @@ jobs:
         run: node --test scripts/ops/reconcile-appwrite-schema.test.mjs
       - name: Test package-scope grant deployment validation
         run: node --test scripts/ops/package-scope-grants.test.mjs
+      - name: Test production write approval matrix
+        run: node --test scripts/ops/render-wrangler-config.test.mjs
