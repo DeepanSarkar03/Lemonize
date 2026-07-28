@@ -14,7 +14,7 @@
   "dependencies": {
     "@lemonize/shared": "workspace:*",
     "hono": "^4.6.3",
-    "jose": "6.2.3"
+    "jose": "6.2.4"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.18.5",
