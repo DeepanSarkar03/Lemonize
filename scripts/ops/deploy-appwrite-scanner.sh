@@ -106,26 +106,19 @@ if [[ "$function_command" == update && -n "$fallback_id" ]]; then
 fi
 
 if [[ "$fallback_eligible" != true ]]; then
-"$APPWRITE_BIN" --json functions "$function_command" \
-  --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
-  --name "Lemonize artifact scanner" \
-  --runtime node-25 \
-  --execute \
-  --events \
-  --schedule "" \
-  --timeout 60 \
-  --enabled true \
-  --logging true \
-  --entrypoint dist/main.js \
-  --commands "node --check dist/main.js" \
-  --scopes files.read files.write \
-  --installation-id "" \
-  --provider-repository-id "" \
-  --provider-branch "" \
-  --provider-root-directory "" \
-  --provider-branches \
-  --provider-paths \
-  --deployment-retention 3 >/dev/null
+reconcile_response_file="$HOME/reconcile-response.json"
+reconciled_function_file="$HOME/reconciled-function.json"
+# Commander represents a bare optional variadic flag as boolean true, so the
+# Appwrite CLI cannot express an intentional empty roles/events array. Send the
+# exact JSON configuration to the same API endpoint and verify the response
+# before any code or variable mutation can proceed.
+node "$script_dir/reconcile-appwrite-scanner-function.mjs" \
+  "$function_command" > "$reconcile_response_file"
+"$APPWRITE_BIN" --json functions get \
+  --function-id "$APPWRITE_SCANNER_FUNCTION_ID" > "$reconciled_function_file"
+node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
+  --configuration-only "$reconciled_function_file" \
+  "$APPWRITE_SCANNER_FUNCTION_ID" >/dev/null
 
 variables_file="$HOME/variables.json"
 "$APPWRITE_BIN" --json functions list-variables \
