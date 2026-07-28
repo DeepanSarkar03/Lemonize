@@ -4,6 +4,7 @@ export interface LegalSection {
   title: string;
   paragraphs?: ReactNode[];
   items?: ReactNode[];
+  orderedItems?: ReactNode[];
 }
 
 interface LegalDocumentProps {
@@ -11,13 +12,20 @@ interface LegalDocumentProps {
   description: string;
   effectiveDate: string;
   sections: LegalSection[];
+  eyebrow?: string;
 }
 
-export function LegalDocument({ title, description, effectiveDate, sections }: LegalDocumentProps) {
+export function LegalDocument({
+  title,
+  description,
+  effectiveDate,
+  sections,
+  eyebrow = 'Legal / Lemonize',
+}: LegalDocumentProps) {
   return (
     <article className="mx-auto max-w-3xl">
       <header className="space-y-4 border-b border-line pb-10">
-        <p className="technical-label text-lemon-text">Legal / Lemonize</p>
+        <p className="technical-label text-lemon-text">{eyebrow}</p>
         <h1 className="display-title text-4xl sm:text-5xl">{title}</h1>
         <p className="max-w-2xl text-lg leading-relaxed text-ink-600">{description}</p>
         <p className="font-mono text-xs text-ink-600">Effective {effectiveDate}</p>
@@ -38,6 +46,13 @@ export function LegalDocument({ title, description, effectiveDate, sections }: L
                   <li key={index}>{item}</li>
                 ))}
               </ul>
+            ) : null}
+            {section.orderedItems ? (
+              <ol className="max-w-[70ch] list-decimal space-y-3 pl-5 text-[15px] leading-7 text-ink-600 marker:font-mono marker:text-lemon-text">
+                {section.orderedItems.map((item, index) => (
+                  <li key={index}>{item}</li>
+                ))}
+              </ol>
             ) : null}
           </section>
         ))}

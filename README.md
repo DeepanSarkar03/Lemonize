@@ -156,6 +156,7 @@ Do not enable production writes to work around any of these blockers.
 - [CLI reference](docs/CLI.md)
 - [npm CDN proxy](docs/NPM_PROXY.md)
 - [Operations runbooks](docs/operations/README.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
 
 ## License
 

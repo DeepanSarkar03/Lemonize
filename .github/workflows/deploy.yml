@@ -185,6 +185,9 @@ jobs:
             APPWRITE_SCANNER_FUNCTION_ID CLERK_ISSUER CLERK_AUTHORIZED_PARTIES \
             VERCEL_ORG_ID VERCEL_PROJECT_ID NPM_PROXY_BASE_URL
           node scripts/ops/verify-appwrite-config.mjs "$DEPLOY_ENV"
+          node scripts/ops/verify-clerk-public-config.mjs \
+            "$DEPLOY_ENV" "$CLERK_ISSUER" "$WEB_BASE_URL" \
+            "$CLERK_AUTHORIZED_PARTIES" --pins-only
           node scripts/ops/render-wrangler-config.mjs "$RUNNER_TEMP/wrangler.json"
           pnpm --filter @lemonize/registry-worker exec wrangler deploy \
             --config "$RUNNER_TEMP/wrangler.json" --dry-run \
@@ -205,6 +208,11 @@ jobs:
           node scripts/ops/reconcile-appwrite-schema.mjs "$DEPLOY_ENV"
 
       - name: Reconcile and deploy Appwrite artifact scanner
+        # The scanner is reachable only from the publish finalization path.
+        # Keep read-only releases independent of Appwrite's build service, but
+        # require a fresh successful scanner deployment before any environment
+        # can accept writes.
+        if: ${{ vars.REGISTRY_MODE != 'read_only' || vars.ALLOW_PUBLIC_PUBLISH == 'true' }}
         env:
           APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT }}
           APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID }}
@@ -251,7 +259,35 @@ jobs:
           pnpm --filter @lemonize/npm-proxy-worker exec wrangler deploy \
             --env "$DEPLOY_ENV"
 
-      - name: Build and deploy web with Vercel
+      - name: Snapshot current stable Vercel deployment
+        id: stable_before
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          WEB_BASE_URL: ${{ vars.WEB_BASE_URL }}
+        run: |
+          bash scripts/ops/require-env.sh \
+            VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID WEB_BASE_URL
+
+          inspect_json="$RUNNER_TEMP/vercel-stable-before.json"
+          deployment_json="$RUNNER_TEMP/vercel-stable-before-api.json"
+          vercel inspect "$WEB_BASE_URL" --cwd apps/web \
+            --token "$VERCEL_TOKEN" --format=json > "$inspect_json"
+          previous_deployment_id=$(node scripts/ops/vercel-release-integrity.mjs \
+            resolved-id "$inspect_json")
+
+          curl --silent --show-error --fail-with-body \
+            --retry 3 --retry-all-errors --retry-delay 1 --max-time 30 \
+            --header "Authorization: Bearer $VERCEL_TOKEN" \
+            --get --data-urlencode "teamId=$VERCEL_ORG_ID" \
+            "https://api.vercel.com/v13/deployments/$previous_deployment_id" \
+            > "$deployment_json"
+          previous_deployment_id=$(node scripts/ops/vercel-release-integrity.mjs \
+            snapshot "$inspect_json" "$deployment_json" "$VERCEL_PROJECT_ID")
+          echo "deployment_id=$previous_deployment_id" >> "$GITHUB_OUTPUT"
+
+      - name: Build exact web deployment with Vercel
         id: web
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -260,10 +296,16 @@ jobs:
           NEXT_PUBLIC_REGISTRY_URL: ${{ vars.REGISTRY_BASE_URL }}
           WEB_BASE_URL: ${{ vars.WEB_BASE_URL }}
           DEPLOY_ENV: ${{ inputs.environment }}
+          REQUESTED_SHA: ${{ inputs.git_ref }}
         run: |
           bash scripts/ops/require-env.sh \
             VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID \
-            NEXT_PUBLIC_REGISTRY_URL WEB_BASE_URL
+            NEXT_PUBLIC_REGISTRY_URL WEB_BASE_URL DEPLOY_ENV REQUESTED_SHA
+          release_sha=$(git rev-parse HEAD)
+          if [[ "$release_sha" != "${REQUESTED_SHA,,}" ]]; then
+            echo "Checked-out commit does not match the approved release SHA" >&2
+            exit 1
+          fi
           if [[ "$DEPLOY_ENV" == production ]]; then
             target=production
           else
@@ -273,19 +315,142 @@ jobs:
             --yes --environment "$target" --token "$VERCEL_TOKEN"
           vercel build --cwd apps/web \
             --yes --target "$target" --token "$VERCEL_TOKEN"
-          deployment_url=$(vercel deploy --cwd apps/web \
-            --yes --prebuilt --target "$target" --token "$VERCEL_TOKEN" --no-color | tail -n 1 | tr -d '\r')
-          if [[ ! "$deployment_url" =~ ^https:// ]]; then
-            echo "Vercel did not return an HTTPS deployment URL" >&2
+
+          deploy_json="$RUNNER_TEMP/vercel-deploy.json"
+          deploy_args=(
+            vercel deploy --cwd apps/web --yes --prebuilt
+            --target "$target" --token "$VERCEL_TOKEN" --no-color
+            --format=json
+            --meta "githubCommitSha=$release_sha"
+            --meta "lemonizeReleaseSha=$release_sha"
+          )
+          if [[ "$DEPLOY_ENV" == production ]]; then
+            deploy_args+=(--skip-domain)
+          fi
+          "${deploy_args[@]}" > "$deploy_json"
+
+          mapfile -t deployment_fields < <(
+            node scripts/ops/vercel-release-integrity.mjs \
+              deploy-output "$deploy_json" "$target"
+          )
+          if [[ "${#deployment_fields[@]}" -ne 2 ]]; then
+            echo "Vercel deploy JSON parsing returned an unexpected result" >&2
             exit 1
           fi
-          if [[ "$DEPLOY_ENV" == staging ]]; then
+          deployment_id=${deployment_fields[0]}
+          deployment_url=${deployment_fields[1]}
+
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "url=$WEB_BASE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify exact Vercel deployment identity and commit metadata
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          DEPLOY_ENV: ${{ inputs.environment }}
+          DEPLOYMENT_ID: ${{ steps.web.outputs.deployment_id }}
+          DEPLOYMENT_URL: ${{ steps.web.outputs.deployment_url }}
+          RELEASE_SHA: ${{ steps.web.outputs.release_sha }}
+        run: |
+          bash scripts/ops/require-env.sh \
+            VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID DEPLOY_ENV \
+            DEPLOYMENT_ID DEPLOYMENT_URL RELEASE_SHA
+
+          inspect_json="$RUNNER_TEMP/vercel-exact-inspect.json"
+          deployment_json="$RUNNER_TEMP/vercel-exact-api.json"
+          vercel inspect "$DEPLOYMENT_URL" --cwd apps/web \
+            --token "$VERCEL_TOKEN" --format=json > "$inspect_json"
+          curl --silent --show-error --fail-with-body \
+            --retry 3 --retry-all-errors --retry-delay 1 --max-time 30 \
+            --header "Authorization: Bearer $VERCEL_TOKEN" \
+            --get --data-urlencode "teamId=$VERCEL_ORG_ID" \
+            "https://api.vercel.com/v13/deployments/$DEPLOYMENT_ID" \
+            > "$deployment_json"
+          node scripts/ops/vercel-release-integrity.mjs exact \
+            "$inspect_json" "$deployment_json" "$DEPLOYMENT_ID" \
+            "$DEPLOYMENT_URL" "$VERCEL_PROJECT_ID" "$RELEASE_SHA" \
+            "$DEPLOY_ENV"
+
+      - name: Verify exact protected web deployment before promotion
+        env:
+          DEPLOY_ENV: ${{ inputs.environment }}
+          CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
+          CLERK_AUTHORIZED_PARTIES: ${{ vars.CLERK_AUTHORIZED_PARTIES }}
+          WEB_BASE_URL: ${{ vars.WEB_BASE_URL }}
+          WEB_PROBE_URL: ${{ steps.web.outputs.deployment_url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          bash scripts/ops/require-env.sh \
+            DEPLOY_ENV CLERK_ISSUER CLERK_AUTHORIZED_PARTIES WEB_BASE_URL \
+            WEB_PROBE_URL VERCEL_AUTOMATION_BYPASS_SECRET
+          node scripts/ops/verify-clerk-public-config.mjs \
+            "$DEPLOY_ENV" "$CLERK_ISSUER" "$WEB_BASE_URL" \
+            "$CLERK_AUTHORIZED_PARTIES" "$WEB_PROBE_URL"
+
+      - name: Promote verified web deployment
+        id: promote
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          DEPLOY_ENV: ${{ inputs.environment }}
+          DEPLOYMENT_ID: ${{ steps.web.outputs.deployment_id }}
+          WEB_BASE_URL: ${{ vars.WEB_BASE_URL }}
+        run: |
+          bash scripts/ops/require-env.sh \
+            VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID \
+            DEPLOY_ENV DEPLOYMENT_ID WEB_BASE_URL
+          echo "attempted=true" >> "$GITHUB_OUTPUT"
+          if [[ "$DEPLOY_ENV" == production ]]; then
+            vercel promote "$DEPLOYMENT_ID" --cwd apps/web \
+              --token "$VERCEL_TOKEN" --yes --timeout 2m
+          else
             stable_hostname=$(node -e 'process.stdout.write(new URL(process.env.WEB_BASE_URL).hostname)')
-            vercel alias set "$deployment_url" "$stable_hostname" \
+            vercel alias set "$DEPLOYMENT_ID" "$stable_hostname" --cwd apps/web \
               --token "$VERCEL_TOKEN" --non-interactive
           fi
-          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
-          echo "url=$WEB_BASE_URL" >> "$GITHUB_OUTPUT"
+          echo "succeeded=true" >> "$GITHUB_OUTPUT"
+
+      - name: Assert stable Vercel hostname targets exact deployment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          WEB_BASE_URL: ${{ vars.WEB_BASE_URL }}
+          EXPECTED_DEPLOYMENT_ID: ${{ steps.web.outputs.deployment_id }}
+        run: |
+          bash scripts/ops/require-env.sh \
+            VERCEL_TOKEN WEB_BASE_URL EXPECTED_DEPLOYMENT_ID
+          inspect_json="$RUNNER_TEMP/vercel-stable-after.json"
+          for attempt in {1..12}; do
+            if vercel inspect "$WEB_BASE_URL" --cwd apps/web \
+              --token "$VERCEL_TOKEN" --format=json > "$inspect_json"; then
+              resolved_id=$(node scripts/ops/vercel-release-integrity.mjs \
+                resolved-id "$inspect_json") || resolved_id=''
+              if [[ "$resolved_id" == "$EXPECTED_DEPLOYMENT_ID" ]]; then
+                exit 0
+              fi
+            fi
+            if [[ "$attempt" -lt 12 ]]; then
+              echo "Stable Vercel routing has not converged (attempt $attempt/12)"
+              sleep 5
+            fi
+          done
+          echo "Stable Vercel hostname does not target the verified deployment" >&2
+          exit 1
+
+      - name: Verify promoted Clerk and stable web configuration
+        env:
+          DEPLOY_ENV: ${{ inputs.environment }}
+          CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
+          CLERK_AUTHORIZED_PARTIES: ${{ vars.CLERK_AUTHORIZED_PARTIES }}
+          WEB_BASE_URL: ${{ vars.WEB_BASE_URL }}
+        run: |
+          bash scripts/ops/require-env.sh \
+            DEPLOY_ENV CLERK_ISSUER CLERK_AUTHORIZED_PARTIES WEB_BASE_URL
+          node scripts/ops/verify-clerk-public-config.mjs \
+            "$DEPLOY_ENV" "$CLERK_ISSUER" "$WEB_BASE_URL" "$CLERK_AUTHORIZED_PARTIES"
 
       - name: Smoke test deployed registry and web
         env:
@@ -293,6 +458,58 @@ jobs:
           WEB_SMOKE_URL: ${{ vars.WEB_BASE_URL }}
           NPM_PROXY_SMOKE_URL: ${{ vars.NPM_PROXY_BASE_URL }}
         run: bash scripts/ops/smoke-test.sh
+
+      - name: Roll back stable web routing after failed verification
+        if: ${{ failure() && steps.promote.outputs.attempted == 'true' }}
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          DEPLOY_ENV: ${{ inputs.environment }}
+          WEB_BASE_URL: ${{ vars.WEB_BASE_URL }}
+          PREVIOUS_DEPLOYMENT_ID: ${{ steps.stable_before.outputs.deployment_id }}
+        run: |
+          bash scripts/ops/require-env.sh \
+            VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID DEPLOY_ENV \
+            WEB_BASE_URL PREVIOUS_DEPLOYMENT_ID
+
+          inspect_json="$RUNNER_TEMP/vercel-rollback-current.json"
+          if [[ "$DEPLOY_ENV" == production ]]; then
+            if ! vercel rollback "$PREVIOUS_DEPLOYMENT_ID" --cwd apps/web \
+              --token "$VERCEL_TOKEN" --yes --timeout 1m; then
+              echo "Vercel rollback command failed; verifying stable routing before failing closed" >&2
+            fi
+          else
+            stable_hostname=$(node -e 'process.stdout.write(new URL(process.env.WEB_BASE_URL).hostname)')
+            if ! vercel alias set "$PREVIOUS_DEPLOYMENT_ID" "$stable_hostname" \
+              --cwd apps/web --token "$VERCEL_TOKEN" --non-interactive; then
+              echo "Vercel alias rollback failed; verifying stable routing before failing closed" >&2
+            fi
+          fi
+
+          consecutive_matches=0
+          for attempt in {1..12}; do
+            if vercel inspect "$WEB_BASE_URL" --cwd apps/web \
+              --token "$VERCEL_TOKEN" --format=json > "$inspect_json"; then
+              restored_id=$(node scripts/ops/vercel-release-integrity.mjs \
+                resolved-id "$inspect_json") || restored_id=''
+              if [[ "$restored_id" == "$PREVIOUS_DEPLOYMENT_ID" ]]; then
+                consecutive_matches=$((consecutive_matches + 1))
+                if [[ "$consecutive_matches" -ge 2 ]]; then
+                  echo "Restored stable web routing to $PREVIOUS_DEPLOYMENT_ID"
+                  exit 0
+                fi
+              else
+                consecutive_matches=0
+              fi
+            fi
+            if [[ "$attempt" -lt 12 ]]; then
+              echo "Waiting for Vercel rollback to converge (attempt $attempt/12)"
+              sleep 5
+            fi
+          done
+          echo "Vercel rollback did not restore the previous stable deployment" >&2
+          exit 1
 
       - name: Record deployment
         env:

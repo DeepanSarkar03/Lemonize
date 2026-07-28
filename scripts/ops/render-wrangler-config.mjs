@@ -42,19 +42,6 @@ if (missing.length > 0) {
 if (!['staging', 'production'].includes(process.env.DEPLOY_ENV)) {
   throw new Error('DEPLOY_ENV must be staging or production');
 }
-if (
-  process.env.DEPLOY_ENV === 'production' &&
-  process.env.ALLOW_PUBLIC_PUBLISH === 'true' &&
-  process.env.REGISTRY_MODE !== 'read_only' &&
-  process.env.PRODUCTION_WRITE_APPROVED !== 'ENABLE_PUBLIC_WRITES'
-) {
-  throw new Error(
-    'Mutable production deployment requires PRODUCTION_WRITE_APPROVED=ENABLE_PUBLIC_WRITES',
-  );
-}
-if (process.env.ALLOW_PUBLIC_PUBLISH === 'true' && process.env.REGISTRY_MODE === 'read_only') {
-  throw new Error('ALLOW_PUBLIC_PUBLISH=true is invalid while REGISTRY_MODE=read_only');
-}
 if (!['public', 'invite_only', 'read_only'].includes(process.env.REGISTRY_MODE)) {
   throw new Error('REGISTRY_MODE must be public, invite_only, or read_only');
 }
@@ -63,6 +50,18 @@ for (const name of ['ALLOW_PUBLIC_PUBLISH', 'ALLOW_PRIVATE_PACKAGES']) {
   if (!['true', 'false'].includes(process.env[name])) {
     throw new Error(`${name} must be the string true or false`);
   }
+}
+if (process.env.ALLOW_PUBLIC_PUBLISH === 'true' && process.env.REGISTRY_MODE === 'read_only') {
+  throw new Error('ALLOW_PUBLIC_PUBLISH=true is invalid while REGISTRY_MODE=read_only');
+}
+if (
+  process.env.DEPLOY_ENV === 'production' &&
+  (process.env.REGISTRY_MODE !== 'read_only' || process.env.ALLOW_PUBLIC_PUBLISH === 'true') &&
+  process.env.PRODUCTION_WRITE_APPROVED !== 'ENABLE_PUBLIC_WRITES'
+) {
+  throw new Error(
+    'Mutable production deployment requires PRODUCTION_WRITE_APPROVED=ENABLE_PUBLIC_WRITES',
+  );
 }
 for (const name of [
   'MAX_TARBALL_SIZE_BYTES',
