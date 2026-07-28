@@ -77,6 +77,8 @@ function functionPayload(overrides = {}) {
     providerRootDirectory: '',
     providerBranches: [],
     providerPaths: [],
+    buildSpecification: 's-2vcpu-2gb',
+    runtimeSpecification: 's-0.5vcpu-512mb',
     ...overrides,
   };
 }
@@ -172,6 +174,8 @@ test('accepts exact scanner configuration without requiring a live deployment', 
     { providerBranches: ['*'] },
     { providerPaths: ['**/*'] },
     { providerSilentMode: true },
+    { buildSpecification: 's-1vcpu-512mb' },
+    { runtimeSpecification: 's-1vcpu-1gb' },
   ]) {
     assert.throws(
       () => verifyScannerFunctionConfiguration(functionPayload(drift), functionId),
@@ -193,6 +197,7 @@ test('reconciles empty Appwrite arrays as JSON instead of bare CLI flags', async
   assert.equal(request.url, `https://fra.cloud.appwrite.io/v1/functions/${functionId}`);
   assert.equal(request.init.method, 'PUT');
   assert.equal(request.init.headers['x-appwrite-key'], apiKey);
+  assert.equal(request.init.headers['x-appwrite-response-format'], '1.8.1');
   assert.deepEqual(JSON.parse(request.init.body), scannerFunctionConfiguration());
 
   let captured;
@@ -201,7 +206,12 @@ test('reconciles empty Appwrite arrays as JSON instead of bare CLI flags', async
     return new Response(JSON.stringify(functionPayload({ live: false })), { status: 200 });
   });
   assert.equal(result.$id, functionId);
-  assert.deepEqual(captured, request);
+  assert.equal(captured.url, request.url);
+  assert.equal(captured.init.method, request.init.method);
+  assert.equal(captured.init.body, request.init.body);
+  assert.deepEqual(captured.init.headers, request.init.headers);
+  assert.equal(captured.init.redirect, 'error');
+  assert.equal(captured.init.signal.aborted, false);
 
   const create = buildScannerFunctionRequest({ ...options, command: 'create' });
   assert.equal(create.url, 'https://fra.cloud.appwrite.io/v1/functions');

@@ -54,7 +54,9 @@ export function verifyScannerFunctionConfiguration(functionPayload, functionId) 
     fn.providerSilentMode !== false ||
     fn.providerRootDirectory !== '' ||
     !sameStringSet(fn.providerBranches, []) ||
-    !sameStringSet(fn.providerPaths, [])
+    !sameStringSet(fn.providerPaths, []) ||
+    fn.buildSpecification !== 's-2vcpu-2gb' ||
+    fn.runtimeSpecification !== 's-0.5vcpu-512mb'
   ) {
     throw new Error('The scanner function configuration has drifted');
   }

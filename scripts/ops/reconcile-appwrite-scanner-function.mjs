@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$/;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 function requireId(value, label) {
   if (typeof value !== 'string' || !ID_PATTERN.test(value)) {
@@ -37,6 +38,8 @@ export function scannerFunctionConfiguration() {
     providerRootDirectory: '',
     providerBranches: [],
     providerPaths: [],
+    buildSpecification: 's-2vcpu-2gb',
+    runtimeSpecification: 's-0.5vcpu-512mb',
     deploymentRetention: 3,
   };
 }
@@ -84,6 +87,7 @@ export function buildScannerFunctionRequest({ command, endpoint, projectId, apiK
         accept: 'application/json',
         'x-appwrite-project': projectId,
         'x-appwrite-key': apiKey,
+        'x-appwrite-response-format': '1.8.1',
       },
       body: JSON.stringify(body),
       redirect: 'error',
@@ -93,7 +97,10 @@ export function buildScannerFunctionRequest({ command, endpoint, projectId, apiK
 
 export async function reconcileScannerFunction(options, fetchImpl = fetch) {
   const request = buildScannerFunctionRequest(options);
-  const response = await fetchImpl(request.url, request.init);
+  const response = await fetchImpl(request.url, {
+    ...request.init,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
   const responseText = await response.text();
   if (!response.ok) {
     const safeMessage = responseText
