@@ -272,6 +272,56 @@ export function scannerChallengeHeaders(secret, now = new Date()) {
   };
 }
 
+const KNOWN_SCANNER_FAILURE_CODES = new Set(['scanner_misconfigured', 'scanner_failure']);
+
+function exactScannerFailureCode(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (
+    value.ok !== false ||
+    !value.error ||
+    typeof value.error !== 'object' ||
+    Array.isArray(value.error) ||
+    Object.keys(value).sort().join(',') !== 'error,ok' ||
+    Object.keys(value.error).join(',') !== 'code' ||
+    !KNOWN_SCANNER_FAILURE_CODES.has(value.error.code)
+  ) {
+    return null;
+  }
+  return value.error.code;
+}
+
+export function classifyScannerChallengeFailure(executionPayload) {
+  const execution = requireObject(executionPayload, 'Scanner challenge execution');
+  if (['waiting', 'processing', 'scheduled'].includes(execution.status)) return 'not_completed';
+  if (execution.status !== 'failed') return 'contract_mismatch';
+  if (
+    !Number.isSafeInteger(execution.responseStatusCode) ||
+    execution.responseStatusCode < 500 ||
+    execution.responseStatusCode > 599
+  ) {
+    return 'failed_non_5xx';
+  }
+
+  let responseBody;
+  try {
+    responseBody = JSON.parse(execution.responseBody);
+  } catch {
+    responseBody = null;
+  }
+  const scannerFailureCode = exactScannerFailureCode(responseBody);
+  if (scannerFailureCode) return scannerFailureCode;
+
+  const errors = typeof execution.errors === 'string' ? execution.errors : '';
+  if (
+    /(?:^|\n)(?:Failed to load entrypoint, file |Failed to load module:|Function signature invalid\.|Syntax error in )/.test(
+      errors,
+    )
+  ) {
+    return 'runtime_load';
+  }
+  return 'unknown_5xx';
+}
+
 export function verifyScannerChallenge(executionPayload, expectedDeploymentId, expectedFunctionId) {
   const execution = requireObject(executionPayload, 'Scanner challenge execution');
   const mismatches = [];
@@ -308,7 +358,7 @@ export function verifyScannerChallenge(executionPayload, expectedDeploymentId, e
   }
   if (mismatches.length > 0) {
     throw new Error(
-      `Scanner secret challenge mismatched fields: ${[...new Set(mismatches)].join(', ')}`,
+      `Scanner secret challenge mismatched fields: ${[...new Set(mismatches)].join(', ')}; failure class: ${classifyScannerChallengeFailure(execution)}`,
     );
   }
   return expectedDeploymentId;
