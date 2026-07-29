@@ -7,6 +7,8 @@ import { create } from 'tar';
 import {
   isExactArtifactHandoffFailure,
   scannerChallengeHeaders,
+  verifyAppwriteServerVersion,
+  verifyAttestedStaleScannerFunctionState,
   verifyScannerFallback,
   verifyScannerChallenge,
   verifyScannerFunctionConfiguration,
@@ -21,6 +23,10 @@ import {
 
 const functionId = 'artifact-scanner';
 const deploymentId = 'ready-deployment-1';
+const attestedStagingDeploymentId = '6a6181a0da2eaed03005';
+const attestedStagingProjectId = 'lemonize-staging-2026';
+const attestedProductionDeploymentId = '6a61824d9976c050eeee';
+const attestedProductionProjectId = 'lemonize-prod-2026';
 
 function writeField(buffer, value, offset, length) {
   Buffer.from(value).copy(buffer, offset, 0, Math.min(Buffer.byteLength(value), length));
@@ -162,6 +168,99 @@ async function verify(input = {}) {
 
 test('accepts only an active ready deployment with byte-identical source', async () => {
   assert.equal(await verify(), deploymentId);
+});
+
+test('accepts a stale marker only for the checked-in deployment attestation', async () => {
+  const files = await fixture();
+  try {
+    const staleFunction = functionPayload({
+      deploymentId: attestedStagingDeploymentId,
+      live: false,
+    });
+    const readyDeployment = deploymentPayload({ $id: attestedStagingDeploymentId });
+    assert.equal(
+      verifyAttestedStaleScannerFunctionState(
+        staleFunction,
+        attestedStagingDeploymentId,
+        functionId,
+        attestedStagingProjectId,
+      ),
+      attestedStagingDeploymentId,
+    );
+    assert.equal(
+      verifyAttestedStaleScannerFunctionState(
+        functionPayload({ deploymentId: attestedProductionDeploymentId, live: false }),
+        attestedProductionDeploymentId,
+        functionId,
+        attestedProductionProjectId,
+      ),
+      attestedProductionDeploymentId,
+    );
+    assert.equal(
+      await verifyScannerFallback({
+        functionPayload: staleFunction,
+        deploymentPayload: readyDeployment,
+        expectedDeploymentId: attestedStagingDeploymentId,
+        functionId,
+        candidateDirectory: files.candidate,
+        sourceArchive: files.archive,
+        attestedStaleProjectId: attestedStagingProjectId,
+      }),
+      attestedStagingDeploymentId,
+    );
+    assert.throws(
+      () =>
+        verifyAttestedStaleScannerFunctionState(
+          { ...staleFunction, live: true },
+          attestedStagingDeploymentId,
+          functionId,
+          attestedStagingProjectId,
+        ),
+      /exact stale configuration marker/,
+    );
+    assert.throws(
+      () =>
+        verifyAttestedStaleScannerFunctionState(
+          staleFunction,
+          attestedStagingDeploymentId,
+          functionId,
+          'unreviewed-project',
+        ),
+      /not covered by a checked-in attestation/,
+    );
+    assert.throws(
+      () =>
+        verifyAttestedStaleScannerFunctionState(
+          staleFunction,
+          attestedStagingDeploymentId,
+          functionId,
+          attestedProductionProjectId,
+        ),
+      /not covered by a checked-in attestation/,
+    );
+    await assert.rejects(
+      verifyScannerFallback({
+        functionPayload: staleFunction,
+        deploymentPayload: { ...readyDeployment, status: 'failed' },
+        expectedDeploymentId: attestedStagingDeploymentId,
+        functionId,
+        candidateDirectory: files.candidate,
+        sourceArchive: files.archive,
+        attestedStaleProjectId: attestedStagingProjectId,
+      }),
+      /not a complete ready build/,
+    );
+  } finally {
+    await rm(files.root, { recursive: true, force: true });
+  }
+});
+
+test('pins the stale fallback exception to Appwrite 1.9.5', () => {
+  assert.equal(verifyAppwriteServerVersion({ version: '1.9.5' }), '1.9.5');
+  assert.throws(
+    () => verifyAppwriteServerVersion({ version: '1.9.6' }),
+    /not approved for Appwrite 1.9.6/,
+  );
 });
 
 test('accepts exact scanner configuration without requiring a live deployment', () => {

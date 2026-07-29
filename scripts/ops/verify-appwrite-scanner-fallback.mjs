@@ -12,6 +12,15 @@ const MAX_BUILD_BYTES = 50 * 1024 * 1024;
 const MAX_SOURCE_FILES = 256;
 const CHALLENGE_PATH = '/__lemonize_secret_challenge';
 const CHALLENGE_BODY = '{}';
+const ATTESTED_APPWRITE_VERSION = '1.9.5';
+// These immutable deployments were built successfully from commit
+// 3060c6e03a90c697eae4898a5384f8071677bdb1 by Actions runs 29975397469
+// (staging) and 29975504229 (production). A stale-marker exception for any
+// other project/deployment pair requires a reviewed code change.
+const ATTESTED_STALE_FALLBACKS = new Set([
+  'lemonize-staging-2026:artifact-scanner:6a6181a0da2eaed03005',
+  'lemonize-prod-2026:artifact-scanner:6a61824d9976c050eeee',
+]);
 
 function requireObject(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -78,8 +87,60 @@ export function verifyScannerFunctionState(functionPayload, expectedDeploymentId
   return expectedDeploymentId;
 }
 
-function verifyIdentity(functionPayload, deploymentPayload, expectedDeploymentId, functionId) {
-  verifyScannerFunctionState(functionPayload, expectedDeploymentId, functionId);
+export function verifyAttestedStaleScannerFunctionState(
+  functionPayload,
+  expectedDeploymentId,
+  functionId,
+  projectId,
+) {
+  const fn = requireObject(functionPayload, 'Function');
+  if (
+    !ID_PATTERN.test(expectedDeploymentId) ||
+    !ID_PATTERN.test(functionId) ||
+    !ID_PATTERN.test(projectId)
+  ) {
+    throw new Error(
+      'Stale fallback project, deployment, and function IDs must be valid Appwrite IDs',
+    );
+  }
+  verifyScannerFunctionConfiguration(fn, functionId);
+  if (fn.deploymentId !== expectedDeploymentId) {
+    throw new Error('The expected stale fallback is not the function active deployment');
+  }
+  if (fn.live !== false) {
+    throw new Error('The attested fallback exception requires an exact stale configuration marker');
+  }
+  if (!ATTESTED_STALE_FALLBACKS.has(`${projectId}:${functionId}:${expectedDeploymentId}`)) {
+    throw new Error('The stale scanner fallback is not covered by a checked-in attestation');
+  }
+  return expectedDeploymentId;
+}
+
+export function verifyAppwriteServerVersion(payload) {
+  const version = requireObject(payload, 'Appwrite version');
+  if (version.version !== ATTESTED_APPWRITE_VERSION) {
+    throw new Error(`The stale scanner fallback is not approved for Appwrite ${version.version}`);
+  }
+  return version.version;
+}
+
+function verifyIdentity(
+  functionPayload,
+  deploymentPayload,
+  expectedDeploymentId,
+  functionId,
+  attestedStaleProjectId,
+) {
+  if (attestedStaleProjectId === undefined) {
+    verifyScannerFunctionState(functionPayload, expectedDeploymentId, functionId);
+  } else {
+    verifyAttestedStaleScannerFunctionState(
+      functionPayload,
+      expectedDeploymentId,
+      functionId,
+      attestedStaleProjectId,
+    );
+  }
   const deployment = requireObject(deploymentPayload, 'Deployment');
   if (
     deployment.$id !== expectedDeploymentId ||
@@ -306,8 +367,15 @@ export async function verifyScannerFallback({
   functionId,
   candidateDirectory,
   sourceArchive,
+  attestedStaleProjectId,
 }) {
-  verifyIdentity(functionPayload, deploymentPayload, expectedDeploymentId, functionId);
+  verifyIdentity(
+    functionPayload,
+    deploymentPayload,
+    expectedDeploymentId,
+    functionId,
+    attestedStaleProjectId,
+  );
   const candidateRoot = resolve(candidateDirectory);
   const archivePath = resolve(sourceArchive);
   const archiveStat = await stat(archivePath);
@@ -400,6 +468,17 @@ async function main() {
     );
     return;
   }
+  if (args[0] === '--server-version') {
+    const [, versionFile] = args;
+    if (!versionFile) {
+      throw new Error(
+        'Usage: verify-appwrite-scanner-fallback.mjs --server-version <version.json>',
+      );
+    }
+    const payload = JSON.parse(await readFile(versionFile, 'utf8'));
+    process.stdout.write(`${verifyAppwriteServerVersion(payload)}\n`);
+    return;
+  }
   if (args[0] === '--build-log') {
     const [, deploymentFile] = args;
     if (!deploymentFile) {
@@ -468,6 +547,39 @@ async function main() {
     }
     const executionPayload = JSON.parse(await readFile(executionFile, 'utf8'));
     process.stdout.write(`${verifyScannerChallenge(executionPayload, expectedDeploymentId)}\n`);
+    return;
+  }
+
+  if (args[0] === '--attested-stale-fallback') {
+    const [
+      ,
+      functionFile,
+      deploymentFile,
+      expectedDeploymentId,
+      functionId,
+      candidate,
+      archive,
+      projectId,
+    ] = args;
+    if (!projectId) {
+      throw new Error(
+        'Usage: verify-appwrite-scanner-fallback.mjs --attested-stale-fallback <function.json> <deployment.json> <deployment-id> <function-id> <candidate-dir> <source-archive> <project-id>',
+      );
+    }
+    const [functionPayload, deploymentPayload] = await Promise.all([
+      readFile(functionFile, 'utf8').then(JSON.parse),
+      readFile(deploymentFile, 'utf8').then(JSON.parse),
+    ]);
+    const id = await verifyScannerFallback({
+      functionPayload,
+      deploymentPayload,
+      expectedDeploymentId,
+      functionId,
+      candidateDirectory: candidate,
+      sourceArchive: archive,
+      attestedStaleProjectId: projectId,
+    });
+    process.stdout.write(`${id}\n`);
     return;
   }
 
