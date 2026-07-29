@@ -51,6 +51,7 @@ import {
   scannerSignedHeaders,
   verifyScannerSignature,
 } from '../lib/publish-security.js';
+import { fixedLengthUploadBody } from '../lib/upload-stream.js';
 import { appwriteApiBaseUrl } from '../lib/url.js';
 import { authorizedPackageScopes } from '../lib/package-scope-grants.js';
 import {
@@ -66,6 +67,7 @@ export const internalScan = new Hono<AppBindings>();
 
 const EMPTY_BODY = new Uint8Array();
 const SCAN_RESULT_LIMIT = 32 * 1024;
+const MAX_SCAN_ATTEMPTS = 4;
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,64}$/;
 const DIST_TAG = /^[a-z0-9][a-z0-9._-]*$/i;
 const SAFE_RESULT_CODE = /^[a-z0-9_]{1,64}$/;
@@ -299,25 +301,6 @@ async function acquireGlobalArtifactQuotaLock(env: Env): Promise<string> {
   return key;
 }
 
-function streamWithLimit(
-  body: ReadableStream<Uint8Array>,
-  limit: number,
-  counter: { bytes: number },
-): ReadableStream<Uint8Array> {
-  return body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        counter.bytes += chunk.byteLength;
-        if (counter.bytes > limit) {
-          controller.error(new Error('upload_limit_exceeded'));
-          return;
-        }
-        controller.enqueue(chunk);
-      },
-    }),
-  );
-}
-
 async function deleteQuarantineFile(env: Env, fileId: string | null | undefined): Promise<void> {
   if (!fileId || !SAFE_FILE_ID.test(fileId)) return;
   const bucketId = env.APPWRITE_QUARANTINE_BUCKET_ID || 'quarantine';
@@ -443,7 +426,7 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
       reportIncompleteManifestRejection('scheduled_retry', rejection, job.$id, version.$id);
       continue;
     }
-    if (job.attempts >= 3) {
+    if (job.attempts >= MAX_SCAN_ATTEMPTS) {
       await repo.failScanJob(job.$id, job.attempts, 'scan_result_timeout', null);
       await repo.versions.update(version.$id, {
         status: 'failed',
@@ -493,7 +476,7 @@ export async function retryReadyScans(env: Env, limit = 5): Promise<number> {
         continue;
       }
       const attempts = job.attempts + 1;
-      const terminal = attempts >= 3;
+      const terminal = attempts >= MAX_SCAN_ATTEMPTS;
       const nextAttemptAt = terminal
         ? null
         : new Date(Date.now() + Math.min(15 * 60_000, 60_000 * 2 ** attempts)).toISOString();
@@ -1040,10 +1023,9 @@ publish.put('/uploads/:reservationId', async (c) => {
   const counter = { bytes: 0 };
   let put: R2Object | null;
   try {
-    put = await c.env.BUCKET.put(
-      reservation.stagingKey,
-      streamWithLimit(c.req.raw.body, version.tarballSize, counter),
-      {
+    const upload = fixedLengthUploadBody(c.req.raw.body, version.tarballSize, counter);
+    [put] = await Promise.all([
+      c.env.BUCKET.put(reservation.stagingKey, upload.readable, {
         onlyIf: { etagDoesNotMatch: '*' },
         httpMetadata: { contentType: 'application/gzip', cacheControl: 'private, no-store' },
         customMetadata: {
@@ -1051,8 +1033,9 @@ publish.put('/uploads/:reservationId', async (c) => {
           versionId: version.$id,
           shasum: version.shasum,
         },
-      },
-    );
+      }),
+      upload.completed,
+    ]);
   } catch (error) {
     await c.env.BUCKET.delete(reservation.stagingKey).catch(() => undefined);
     await repo.reservations
@@ -1215,7 +1198,7 @@ publish.post(
         'The stored package manifest is invalid.',
       );
     }
-    if (job.status === 'failed' && job.attempts >= 3) {
+    if (job.status === 'failed' && job.attempts >= MAX_SCAN_ATTEMPTS) {
       throw conflict(
         ErrorCodes.CONFLICT,
         'Artifact scanning retry budget is exhausted; an administrator must reset this publish.',
@@ -1244,7 +1227,7 @@ publish.post(
       } catch {
         if (!accepted) {
           const attempts = Math.max(1, job.attempts + 1);
-          const terminal = attempts >= 3;
+          const terminal = attempts >= MAX_SCAN_ATTEMPTS;
           await repo.failScanJob(
             job.$id,
             attempts,
@@ -1390,7 +1373,7 @@ internalScan.post('/internal/v1/scan-jobs/:jobId/result', async (c) => {
       throw conflict(ErrorCodes.CONFLICT, 'Completed scan jobs are terminal.');
     }
     const attempts = Math.max(job.attempts, 1);
-    const terminal = attempts >= 3;
+    const terminal = attempts >= MAX_SCAN_ATTEMPTS;
     const nextAttemptAt = terminal
       ? null
       : new Date(Date.now() + Math.min(15 * 60_000, 60_000 * 2 ** (attempts - 1))).toISOString();

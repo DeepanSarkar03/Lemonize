@@ -155,10 +155,24 @@ function collectFiles(dir: string, manifest: PackageManifest): string[] {
   const root = resolve(dir);
   const realRoot = realpathSync(root);
   const included = new Set<string>();
-  const add = (rel: string) => included.add(rel.split(sep).join('/'));
+  const includedFolded = new Map<string, { path: string; identity: string }>();
+  const add = (abs: string) => {
+    const rel = relative(realRoot, realpathSync(abs)).split(sep).join('/');
+    const folded = rel.toLocaleLowerCase('en-US');
+    const stat = lstatSync(abs);
+    const identity = `${stat.dev}:${stat.ino}`;
+    const existing = includedFolded.get(folded);
+    if (existing) {
+      if (existing.identity === identity) return;
+      throw new Error(`Cannot pack case-colliding paths: "${existing.path}" and "${rel}".`);
+    }
+    includedFolded.set(folded, { path: rel, identity });
+    included.add(rel);
+  };
 
   const inspect = (abs: string): ReturnType<typeof lstatSync> | undefined => {
-    if (!isContained(root, abs)) throw new Error(`Cannot pack path outside package root: "${abs}".`);
+    if (!isContained(root, abs))
+      throw new Error(`Cannot pack path outside package root: "${abs}".`);
     try {
       if (hasSymlinkComponent(root, abs)) return undefined;
       const st = lstatSync(abs);
@@ -182,7 +196,7 @@ function collectFiles(dir: string, manifest: PackageManifest): string[] {
       const st = inspect(full);
       if (!st) continue;
       if (st.isDirectory()) walk(full);
-      else if (st.isFile() && !isSensitivePath(rel, full)) add(rel);
+      else if (st.isFile() && !isSensitivePath(rel, full)) add(full);
     }
   };
 
@@ -194,12 +208,12 @@ function collectFiles(dir: string, manifest: PackageManifest): string[] {
       const st = inspect(abs);
       if (!st) continue;
       if (st.isDirectory()) walk(abs);
-      else if (st.isFile() && !isSensitivePath(rel, abs)) add(rel);
+      else if (st.isFile() && !isSensitivePath(rel, abs)) add(abs);
     }
     for (const f of ALWAYS_INCLUDE) {
       const abs = join(root, f);
       const st = inspect(abs);
-      if (st?.isFile() && !isSensitivePath(f, abs)) add(f);
+      if (st?.isFile() && !isSensitivePath(f, abs)) add(abs);
     }
   } else {
     walk(root);

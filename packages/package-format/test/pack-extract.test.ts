@@ -89,6 +89,27 @@ describe('pack + extract round-trip', () => {
     expect(existsSync(join(dest, 'index.js'))).toBe(true);
     expect(readFileSync(join(dest, 'index.js'), 'utf8')).toContain('export const x');
   });
+
+  it('canonicalizes case-insensitive README and license aliases', async () => {
+    const src = tmp();
+    writeFileSync(
+      join(src, 'package.json'),
+      JSON.stringify({
+        name: 'portable-aliases',
+        version: '1.0.0',
+        files: ['README.md', 'LICENSE'],
+      }),
+    );
+    writeFileSync(join(src, 'README.md'), '# Portable\n');
+    writeFileSync(join(src, 'LICENSE'), 'MIT\n');
+
+    const packed = await packDirectory(src);
+    const folded = packed.files.map((file) => file.toLocaleLowerCase('en-US'));
+
+    expect(new Set(folded).size).toBe(packed.files.length);
+    expect(folded.filter((file) => file === 'readme.md')).toHaveLength(1);
+    expect(folded.filter((file) => file === 'license')).toHaveLength(1);
+  });
 });
 
 describe('extract rejects malicious / malformed archives', () => {
@@ -96,14 +117,18 @@ describe('extract rejects malicious / malformed archives', () => {
     const src = tmp();
     writeFileSync(join(src, 'notpackage.json'), '{}');
     const evil = await tarOf(src, ['notpackage.json']);
-    await expect(extractTarball(evil, tmp())).rejects.toThrow(/outside the "package\/" root|does not contain/);
+    await expect(extractTarball(evil, tmp())).rejects.toThrow(
+      /outside the "package\/" root|does not contain/,
+    );
   });
 
   it('rejects an archive with no package/package.json manifest', async () => {
     const src = tmp();
     writeFileSync(join(src, 'index.js'), 'x');
     const noManifest = await tarOf(src, ['index.js'], 'package');
-    await expect(extractTarball(noManifest, tmp())).rejects.toThrow(/does not contain package\/package\.json/);
+    await expect(extractTarball(noManifest, tmp())).rejects.toThrow(
+      /does not contain package\/package\.json/,
+    );
   });
 
   it('rejects raw, encoded, and backslash traversal entries before writing', async () => {
@@ -312,7 +337,12 @@ describe('pack rejects root escapes and secrets', () => {
 
     const packed = await packDirectory(src);
     expect(packed.files).toEqual(
-      expect.arrayContaining(['package.json', 'index.js', 'credential-parser.ts', 'public-cert.pem']),
+      expect.arrayContaining([
+        'package.json',
+        'index.js',
+        'credential-parser.ts',
+        'public-cert.pem',
+      ]),
     );
     for (const file of sensitive) expect(packed.files).not.toContain(file);
   });
