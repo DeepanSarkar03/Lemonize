@@ -123,10 +123,88 @@ test('reports only mismatched modern field names and never provider values', asy
       assert.match(error.message, /deploymentId/);
       assert.match(error.message, /requestPath/);
       assert.match(error.message, /responseBody/);
+      assert.match(error.message, /failure class: contract_mismatch/);
       assert.doesNotMatch(error.message, /provider-value|invalid_job/);
       return true;
     },
   );
+});
+
+test('classifies challenge failures without reflecting provider-controlled values', async () => {
+  const providerSecret = `provider-detail ${apiKey} ${scannerSecret}`;
+  const cases = [
+    {
+      expected: 'scanner_misconfigured',
+      overrides: {
+        status: 'failed',
+        responseStatusCode: 500,
+        responseBody: JSON.stringify({
+          ok: false,
+          error: { code: 'scanner_misconfigured' },
+        }),
+        errors: providerSecret,
+      },
+    },
+    {
+      expected: 'scanner_failure',
+      overrides: {
+        status: 'failed',
+        responseStatusCode: 500,
+        responseBody: JSON.stringify({ ok: false, error: { code: 'scanner_failure' } }),
+        errors: providerSecret,
+      },
+    },
+    {
+      expected: 'runtime_load',
+      overrides: {
+        status: 'failed',
+        responseStatusCode: 503,
+        responseBody: '',
+        errors: `Failed to load module: ${providerSecret}`,
+      },
+    },
+    {
+      expected: 'unknown_5xx',
+      overrides: {
+        status: 'failed',
+        responseStatusCode: 500,
+        responseBody: providerSecret,
+        errors: providerSecret,
+      },
+    },
+    {
+      expected: 'unknown_5xx',
+      overrides: {
+        status: 'failed',
+        responseStatusCode: 500,
+        responseBody: JSON.stringify({
+          ok: false,
+          error: { code: 'scanner_failure', detail: providerSecret },
+        }),
+        errors: providerSecret,
+      },
+    },
+    {
+      expected: 'not_completed',
+      overrides: {
+        status: 'processing',
+        responseStatusCode: 0,
+        responseBody: '',
+        errors: providerSecret,
+      },
+    },
+  ];
+
+  for (const { expected, overrides } of cases) {
+    await assert.rejects(
+      executeAppwriteScannerChallenge(options(), async () => jsonResponse(execution(overrides))),
+      (error) => {
+        assert.match(error.message, new RegExp(`failure class: ${expected}$`));
+        assert.doesNotMatch(error.message, /provider-detail|scanner-deploy|scanner-test/);
+        return true;
+      },
+    );
+  }
 });
 
 test('requires exact pinned identifiers and credentials before making a request', async () => {
