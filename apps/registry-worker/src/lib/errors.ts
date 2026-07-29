@@ -1,8 +1,14 @@
 import type { Context } from 'hono';
 import { LemonizeError, ErrorCodes, type ApiErrorBody } from '@lemonize/shared';
 import type { AppBindings } from './env.js';
+import { AppwriteError } from './appwrite.js';
 
-export function errorBody(code: ApiErrorBody['error']['code'], message: string, requestId: string, details?: unknown): ApiErrorBody {
+export function errorBody(
+  code: ApiErrorBody['error']['code'],
+  message: string,
+  requestId: string,
+  details?: unknown,
+): ApiErrorBody {
   return { error: { code, message, requestId, ...(details ? { details } : {}) } };
 }
 
@@ -40,8 +46,18 @@ export function handleError(err: unknown, c: Context<AppBindings>): Response {
     );
   }
   console.error(`[${requestId}] Unhandled error:`, err);
+  const details =
+    c.get('role') === 'admin' && err instanceof AppwriteError
+      ? {
+          dependency: 'appwrite',
+          kind: err.kind,
+          status: err.status,
+          ...(err.responseType ? { responseType: err.responseType } : {}),
+          ...(err.requestId ? { dependencyRequestId: err.requestId } : {}),
+        }
+      : undefined;
   return c.json(
-    errorBody(ErrorCodes.INTERNAL, 'An unexpected error occurred.', requestId),
+    errorBody(ErrorCodes.INTERNAL, 'An unexpected error occurred.', requestId, details),
     500,
   );
 }

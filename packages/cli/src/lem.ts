@@ -159,8 +159,20 @@ async function main() {
     await program.parseAsync(process.argv);
   } catch (err) {
     if (err instanceof ApiClientError) {
-      const request = err.requestId ? ` request=${err.requestId}` : '';
-      log.error(`${err.message} ${log.dim(`[${err.code}${request}]`)}`);
+      if (g().json) {
+        log.json(
+          err.body ?? {
+            error: {
+              code: err.code,
+              message: err.message,
+              requestId: err.requestId,
+            },
+          },
+        );
+      } else {
+        const request = err.requestId ? ` request=${err.requestId}` : '';
+        log.error(`${err.message} ${log.dim(`[${err.code}${request}]`)}`);
+      }
     } else {
       log.error((err as Error).message);
     }
