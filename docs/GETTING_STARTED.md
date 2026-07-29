@@ -65,7 +65,35 @@ Use separate keys with the narrowest provider scopes:
 - deploy key: TablesDB/schema, bucket, and function administration; CI/operator only;
 - runtime key: required row reads/writes, function execution creation, rejected/expired quarantine cleanup, and expired device-token cleanup; Worker only;
 - backup key: policy/archive/restoration operations; backup workflow only;
-- scanner: Appwrite's short-lived execution key with `files.read` and `files.write`, not a static API key.
+- scanner fallback key: a protected, per-environment `APPWRITE_SCANNER_API_KEY` with **only** `files.read` and `files.write`; scanner deployment only. Never reuse `APPWRITE_RUNTIME_API_KEY` or `APPWRITE_DEPLOY_API_KEY`.
+
+Appwrite 1.9.5 supplies its documented execution-scoped key in the
+`x-appwrite-key` request header. The pinned scanner artifact has an integration
+bug that checks only environment variables, and Appwrite's separate artifact
+handoff outage currently blocks deploying the corrected build. The temporary,
+unsupported fallback passes `APPWRITE_SCANNER_API_KEY` only to the scanner
+deployment step, which stores it as secret function variable `APPWRITE_API_KEY`;
+the function must have zero project variables and exactly seven function
+variables. Every scanner deploy requires the live registry to report exact
+read-only policy before it tests or changes the key.
+
+Store the provider key ID in protected variable
+`APPWRITE_SCANNER_API_KEY_ID` and a reviewed, non-secret record in
+`APPWRITE_SCANNER_API_KEY_ATTESTATION_JSON`; see the exact schema in
+[Deployment](operations/DEPLOYMENT.md). Appwrite key secrets are opaque, so CI
+cannot bind the secret cryptographically to that ID or prove the absence of
+extra scopes. It validates the record and demonstrates create/read/delete in the
+exact quarantine bucket; an operator must retain provider-console evidence that
+the identified key has only `files.read` and `files.write`, expires within 90
+days, and is revoked on replacement. Those scopes are project-wide despite the
+bucket pin and canary, which is another reason each environment needs a separate
+Appwrite project.
+
+After the corrected scanner artifact consumes `x-appwrite-key` and Appwrite
+reliably hands off that artifact, delete the scanner API key, protected secret,
+ID and attestation variables, `APPWRITE_API_KEY` function variable, and
+deployment shim. Do not retire only part of the fallback while publishing
+depends on it.
 
 The `quarantine` Storage bucket must remain private with antivirus enabled. The `artifact-scanner` function must use the Appwrite Node 25 runtime, have no public execute role, and share a unique 32-byte-or-longer `SCANNER_SHARED_SECRET` with only its matching Worker. Deployment builds the scanner under the committed pnpm lock, uploads only dependency-free `dist`, and lets Appwrite run `node --check`; Appwrite must not resolve npm dependencies remotely.
 

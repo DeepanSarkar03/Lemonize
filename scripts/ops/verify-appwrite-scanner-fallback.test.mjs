@@ -110,6 +110,7 @@ function deploymentPayload(overrides = {}) {
 const variableValues = {
   REGISTRY_INTERNAL_URL: 'https://registry.example.test',
   SCAN_SIGNING_SECRET: '',
+  APPWRITE_API_KEY: '',
   APPWRITE_QUARANTINE_BUCKET_ID: 'quarantine',
   MAX_ARCHIVE_BYTES: '10485760',
   MAX_PACKAGE_FILES: '2000',
@@ -121,7 +122,7 @@ function variablePayload(overrides = {}) {
     $id: `variable-${index}`,
     key,
     value,
-    secret: key === 'SCAN_SIGNING_SECRET',
+    secret: new Set(['SCAN_SIGNING_SECRET', 'APPWRITE_API_KEY']).has(key),
     resourceType: 'function',
     resourceId: functionId,
   }));
@@ -538,6 +539,7 @@ test('rejects archive links and traversal entries before comparison', async () =
 
 test('accepts only the exact scanner and empty project variable sets', () => {
   assert.equal(verifyVariables(), functionId);
+  assert.equal(variablePayload().total, 7);
   const withNodeOptions = variablePayload();
   withNodeOptions.variables.push({
     $id: 'injected',
@@ -562,6 +564,19 @@ test('accepts only the exact scanner and empty project variable sets', () => {
     /exact allowlist/,
   );
 
+  const exposedStaticKey = variablePayload();
+  const staticKey = exposedStaticKey.variables.find((item) => item.key === 'APPWRITE_API_KEY');
+  staticKey.secret = false;
+  staticKey.value = 'provider-value-that-must-not-be-printed';
+  assert.throws(
+    () => verifyVariables({ functionVariablesPayload: exposedStaticKey }),
+    (error) => {
+      assert.match(error.message, /exact allowlist/);
+      assert.doesNotMatch(error.message, /provider-value/);
+      return true;
+    },
+  );
+
   const overClassified = variablePayload();
   const publicRegistryUrl = overClassified.variables.find(
     (item) => item.key === 'REGISTRY_INTERNAL_URL',
@@ -577,6 +592,13 @@ test('accepts only the exact scanner and empty project variable sets', () => {
   wrongSecretReadback.variables.find((item) => item.key === 'SCAN_SIGNING_SECRET').value = null;
   assert.throws(
     () => verifyVariables({ functionVariablesPayload: wrongSecretReadback }),
+    /exact allowlist/,
+  );
+
+  const wrongStaticKeyReadback = variablePayload();
+  wrongStaticKeyReadback.variables.find((item) => item.key === 'APPWRITE_API_KEY').value = null;
+  assert.throws(
+    () => verifyVariables({ functionVariablesPayload: wrongStaticKeyReadback }),
     /exact allowlist/,
   );
 
@@ -905,4 +927,109 @@ test('wires scanner fallback to the authenticated downloader instead of the CLI 
   );
   assert.doesNotMatch(script, /functions create-execution/);
   assert.doesNotMatch(script, /--challenge-(?:headers|result)/);
+  assert.match(script, /APPWRITE_SCANNER_API_KEY APPWRITE_SCANNER_API_KEY_ID/);
+  assert.match(script, /readonly deploy_api_key=\$APPWRITE_DEPLOY_API_KEY/);
+  assert.match(script, /readonly scanner_api_key=\$APPWRITE_SCANNER_API_KEY/);
+  assert.match(script, /readonly scanner_shared_secret=\$SCANNER_SHARED_SECRET/);
+  assert.match(
+    script,
+    /unset APPWRITE_DEPLOY_API_KEY APPWRITE_SCANNER_API_KEY SCANNER_SHARED_SECRET/,
+  );
+  const secretUnset = script.indexOf(
+    'unset APPWRITE_DEPLOY_API_KEY APPWRITE_SCANNER_API_KEY SCANNER_SHARED_SECRET',
+  );
+  const build = script.indexOf('pnpm --filter @lemonize/artifact-scanner build');
+  const syntaxCheck = script.indexOf('node --check "$deploy_dir/dist/main.js"');
+  const deployExport = script.indexOf('export APPWRITE_DEPLOY_API_KEY=$deploy_api_key');
+  const hmacExport = script.indexOf('export SCANNER_SHARED_SECRET=$scanner_shared_secret');
+  assert.ok(secretUnset < build);
+  assert.ok(build < syntaxCheck);
+  assert.ok(syntaxCheck < deployExport);
+  assert.ok(syntaxCheck < hmacExport);
+  assert.doesNotMatch(script, /export APPWRITE_SCANNER_API_KEY=/);
+  assert.match(script, /"\$scanner_api_key" == "\$deploy_api_key"/);
+  assert.match(script, /"\$scanner_api_key" == "\$scanner_shared_secret"/);
+  assert.match(script, /"\$deploy_api_key" == "\$scanner_shared_secret"/);
+  assert.match(script, /"APPWRITE_API_KEY",/);
+  assert.match(
+    script,
+    /upsert_variable appwrite_api_key APPWRITE_API_KEY "\$scanner_api_key" true/,
+  );
+  assert.match(script, /'APPWRITE_SCANNER_API_KEY',/);
+  assert.doesNotMatch(script, /APPWRITE_RUNTIME_API_KEY/);
+});
+
+test('always gates, canary-checks, and reconciles a rotated scanner key before fallback', async () => {
+  const script = await readFile(new URL('./deploy-appwrite-scanner.sh', import.meta.url), 'utf8');
+  const environmentPin = script.indexOf('verify-appwrite-config.mjs" "$DEPLOY_ENV"');
+  const gate = script.indexOf('if ! verify_live_registry_write_gate; then');
+  const canary = script.indexOf('verify-appwrite-scanner-storage-key.mjs');
+  const reconcile = script.indexOf('"$function_command" > "$reconcile_response_file"');
+  const keyUpsert = script.indexOf(
+    'upsert_variable appwrite_api_key APPWRITE_API_KEY "$scanner_api_key" true',
+  );
+  const fallback = script.indexOf('try_identical_active_fallback()');
+  assert.ok(environmentPin >= 0);
+  assert.ok(environmentPin < gate);
+  assert.ok(gate < canary);
+  assert.ok(canary < reconcile);
+  assert.ok(reconcile < keyUpsert);
+  assert.ok(keyUpsert < fallback);
+  assert.doesNotMatch(script, /fallback_eligible|fallback-preflight/);
+  assert.match(script, /\[\[ "\$stale_fallback_candidate" == true \]\] \|\| return 1/);
+});
+
+test('passes the dedicated scanner key only to scanner deployment workflow steps', async () => {
+  const workflows = [
+    {
+      path: '../../.github/workflows/deploy.yml',
+      step: 'Reconcile and deploy Appwrite artifact scanner',
+    },
+    {
+      path: '../../.github/workflows/deploy-appwrite-scanner.yml',
+      step: 'Deploy dependency-free scanner bundle',
+    },
+  ];
+
+  for (const workflow of workflows) {
+    const source = await readFile(new URL(workflow.path, import.meta.url), 'utf8');
+    const marker = `      - name: ${workflow.step}`;
+    const start = source.indexOf(marker);
+    const end = source.indexOf('\n      - name:', start + marker.length);
+    assert.notEqual(start, -1, `${workflow.step} is present`);
+    const step = source.slice(start, end === -1 ? source.length : end);
+    assert.match(step, /APPWRITE_SCANNER_API_KEY: \$\{\{ secrets\.APPWRITE_SCANNER_API_KEY \}\}/);
+    assert.match(
+      step,
+      /APPWRITE_SCANNER_API_KEY_ID: \$\{\{ vars\.APPWRITE_SCANNER_API_KEY_ID \}\}/,
+    );
+    assert.match(
+      step,
+      /APPWRITE_SCANNER_API_KEY_ATTESTATION_JSON: \$\{\{ vars\.APPWRITE_SCANNER_API_KEY_ATTESTATION_JSON \}\}/,
+    );
+    assert.match(step, /DEPLOY_ENV: \$\{\{ inputs\.environment \}\}/);
+    assert.equal(source.match(/^\s*APPWRITE_SCANNER_API_KEY:/gm)?.length, 1);
+    assert.equal(source.match(/^\s*APPWRITE_SCANNER_API_KEY_ID:/gm)?.length, 1);
+    assert.equal(source.match(/^\s*APPWRITE_SCANNER_API_KEY_ATTESTATION_JSON:/gm)?.length, 1);
+    assert.doesNotMatch(
+      step,
+      /APPWRITE_(?:RUNTIME|DEPLOY)_API_KEY: \$\{\{ secrets\.APPWRITE_SCANNER_API_KEY \}\}/,
+    );
+  }
+});
+
+test('runs the scanner storage-key suite in the required CI scanner check', async () => {
+  const workflow = await readFile(
+    new URL('../../.github/workflows/ci.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    workflow,
+    /node --test[\s\S]*scripts\/ops\/verify-appwrite-scanner-fallback\.test\.mjs[\s\S]*scripts\/ops\/execute-appwrite-scanner-challenge\.test\.mjs[\s\S]*scripts\/ops\/verify-appwrite-scanner-storage-key\.test\.mjs/,
+  );
+  assert.equal(
+    workflow.match(/scripts\/ops\/verify-appwrite-scanner-storage-key\.test\.mjs/g)?.length,
+    1,
+  );
+  assert.equal(workflow.match(/scripts\/ops\/verify-appwrite-config\.test\.mjs/g)?.length, 1);
 });

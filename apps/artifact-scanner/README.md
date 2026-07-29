@@ -21,16 +21,39 @@ Deployment uploads only `package.json` and the dependency-free compiled `dist` d
 | `SCAN_SIGNING_SECRET`           | HMAC secret shared only with the registry (at least 32 bytes) |
 | `APPWRITE_ENDPOINT`             | Local-only fallback for the Appwrite API endpoint             |
 | `APPWRITE_PROJECT_ID`           | Local-only fallback for the Appwrite project ID               |
-| `APPWRITE_API_KEY`              | Local-only fallback for the API key                           |
+| `APPWRITE_API_KEY`              | Temporary secret fallback for the scanner-only Appwrite key   |
 | `APPWRITE_QUARANTINE_BUCKET_ID` | Optional; defaults to `quarantine`                            |
 | `MAX_ARCHIVE_BYTES`             | Optional; defaults to and cannot exceed 20 MiB                |
 | `MAX_PACKAGE_FILES`             | Optional; defaults to 10,000                                  |
 | `MAX_SIGNATURE_AGE_SECONDS`     | Optional; defaults to 300 seconds                             |
 
-In Appwrite Cloud, the function uses the platform-injected
-`APPWRITE_FUNCTION_API_*` values. Configure the function with only
-`files.read` and `files.write` execution scopes; no long-lived Appwrite key is
-stored as a function variable.
+Appwrite 1.9.5 supplies the documented execution-scoped key in the
+`x-appwrite-key` request header. The currently pinned Lemonize artifact has an
+integration bug: it checks only the `APPWRITE_FUNCTION_API_KEY` and
+`APPWRITE_API_KEY` environment variables and does not consume that header. A
+separate Appwrite build artifact-handoff outage prevents deploying the corrected
+artifact. Until that build succeeds, the protected workflow uses a temporary,
+unsupported compatibility shim: it passes the environment's
+`APPWRITE_SCANNER_API_KEY` only to the scanner deployment step, which stores it
+as the secret function variable `APPWRITE_API_KEY`. Never reuse
+`APPWRITE_RUNTIME_API_KEY` or `APPWRITE_DEPLOY_API_KEY` for this purpose.
+
+Create one scanner key per environment with **only** `files.read` and
+`files.write`. Appwrite API keys cannot introspect their own scopes, so an
+operator must manually attest that no additional scope was selected during
+provisioning and rotation. These `files.*` grants apply project-wide: the exact
+quarantine-bucket runtime pin, storage canary, and signed execution challenge
+constrain intended behavior but do not reduce the credential's provider-side
+blast radius. Keep
+environments in separate Appwrite projects, and treat a scanner-key compromise
+as potential access to every file in that project allowed by those two scopes.
+
+Deployment enforces zero project variables and exactly seven function
+variables, including secret `APPWRITE_API_KEY` and `SCAN_SIGNING_SECRET`. After
+the corrected scanner artifact consumes `x-appwrite-key` and Appwrite reliably
+hands off that artifact, remove the provider key, protected secret and
+attestation variables, `APPWRITE_API_KEY` function variable, and deployment shim
+together.
 
 ## Signed protocol
 

@@ -194,6 +194,7 @@ export function verifyScannerVariables({
   const expected = new Map([
     ['REGISTRY_INTERNAL_URL', { value: registryUrl, secret: false }],
     ['SCAN_SIGNING_SECRET', { value: null, secret: true }],
+    ['APPWRITE_API_KEY', { value: null, secret: true }],
     ['APPWRITE_QUARANTINE_BUCKET_ID', { value: quarantineBucketId, secret: false }],
     ['MAX_ARCHIVE_BYTES', { value: maxArchiveBytes, secret: false }],
     ['MAX_PACKAGE_FILES', { value: maxPackageFiles, secret: false }],

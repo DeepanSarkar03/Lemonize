@@ -39,6 +39,7 @@ Configure the following independently on the staging and production GitHub envir
 | Secret   | `VERCEL_AUTOMATION_BYPASS_SECRET`                                        | Per-project credential used only to verify the exact protected deployment before promotion           |
 | Secret   | `APPWRITE_DEPLOY_API_KEY`                                                | CI-only TablesDB/schema, bucket, and function administration                                         |
 | Secret   | `APPWRITE_RUNTIME_API_KEY`                                               | Worker-only rows, scanner execution, rejected/expired file cleanup, and expired device-token cleanup |
+| Secret   | `APPWRITE_SCANNER_API_KEY`                                               | Temporary scanner-only key with only `files.read` and `files.write`                                  |
 | Secret   | `APPWRITE_RESTORE_DATA_API_KEY`                                          | Staging restore-drill CI only; row read/write for generated synthetic resources                      |
 | Secret   | `APPWRITE_BACKUP_API_KEY`                                                | Backup policy, archive, and restoration operations only                                              |
 | Secret   | `CLERK_SECRET_KEY`                                                       | Worker-only active-user/profile lookup in the matching Clerk instance                                |
@@ -61,9 +62,54 @@ Configure the following independently on the staging and production GitHub envir
 | Variable | `APPWRITE_ENDPOINT`, `APPWRITE_PROJECT_ID`, `APPWRITE_DATABASE_ID`       | Exact Appwrite endpoint/project/TablesDB linkage                                                     |
 | Variable | `APPWRITE_QUARANTINE_BUCKET_ID`, `APPWRITE_SCANNER_FUNCTION_ID`          | Private quarantine and scanner linkage                                                               |
 | Variable | `APPWRITE_SCANNER_FALLBACK_DEPLOYMENT_ID`                                | Optional active, ready deployment pin for byte-identical artifact-handoff recovery                   |
+| Variable | `APPWRITE_SCANNER_API_KEY_ID`                                            | Provider ID of the temporary, environment-unique scanner key                                         |
+| Variable | `APPWRITE_SCANNER_API_KEY_ATTESTATION_JSON`                              | Protected non-secret reviewer record for the scanner key                                             |
 | Variable | `CLERK_ISSUER`, `CLERK_AUTHORIZED_PARTIES`                               | Exact Clerk issuer and accepted web origins                                                          |
 
 The expected Clerk issuer, stable web origin, authorized parties, checked definition, and development/production instance type are independently pinned in `infrastructure/clerk/environments.json`. The protected deploy rejects GitHub environment values that do not exactly match that reviewed map. It first checks the immutable Vercel deployment through its project-scoped automation-bypass credential, promotes or aliases only that verified deployment, and then repeats the check on the stable public origin with bounded propagation retries and no bypass credential.
+
+Create a separate `APPWRITE_SCANNER_API_KEY` in each Appwrite project with
+**only** `files.read` and `files.write`, a provider expiry no more than 90 days
+after creation, and no reuse of the Worker runtime key, CI deploy key, or HMAC
+secret. Store its provider ID in `APPWRITE_SCANNER_API_KEY_ID`. Retain reviewed
+provider-console evidence of the ID, project, exact scope selection, creation
+time, expiry, and reviewer, then set the protected non-secret
+`APPWRITE_SCANNER_API_KEY_ATTESTATION_JSON` variable to this exact schema (the
+scope order is mandatory):
+
+Replace every sample value below with current provider-console evidence for the
+selected protected environment; the example dates are not reusable defaults.
+
+```json
+{
+  "createdAt": "2026-07-29T00:00:00.000Z",
+  "environment": "staging",
+  "expiresAt": "2026-08-28T00:00:00.000Z",
+  "keyId": "scanner-key-id",
+  "projectId": "lemonize-staging-2026",
+  "reviewer": "github-reviewer",
+  "scopes": ["files.read", "files.write"]
+}
+```
+
+`createdAt` is the provider creation time of the current key, including a
+replacement created during rotation. `expiresAt` must still be in the future,
+must equal the enforced provider expiry, and may be at most 90 days after
+`createdAt`. The protected workflow validates the exact fields, environment,
+project and key IDs, ordered scopes, dates, and reviewer. It then uses the
+secret to create, read, byte-check, delete, and confirm deletion of a tiny
+random `.tgz` in the exact quarantine bucket. Appwrite key secrets are opaque:
+these checks prove the supplied secret's functional read/write capability but
+cannot cryptographically bind it to the recorded key ID or prove that the key
+has no extra scope. The retained provider evidence, enforced expiry, and prompt
+revocation after replacement remain mandatory.
+
+The workflow passes the secret, ID, and attestation only to the scanner
+deployment step, which writes the secret as function variable
+`APPWRITE_API_KEY`; none is rendered into Wrangler configuration or exposed to
+the Worker, web app, npm proxy, schema sync, or other deployment steps. Every
+scanner deploy and rotation first requires the live `/v1/limits` response to
+prove exact `read_only` mode with publishing disabled.
 
 There is no publisher email or username allowlist. In `public` mode, every active Clerk account is publisher-eligible after accepting the current terms. Require the intended Clerk verification/legal-consent flow, and use only immutable Clerk subjects in `ADMIN_CLERK_IDS` for administrators. GitHub external IDs authorize only reviewed additional scope grants.
 
@@ -73,19 +119,31 @@ The CLI release workflow publishes `@lemonize/cli` with npm OIDC provenance. The
 
 ## What the deployment reconciles
 
-The workflow renders a temporary Wrangler configuration from protected variables and rejects an Appwrite project-ID mismatch with the selected checked-in definition. Clerk's public security policy and pinned environment identity are checked automatically; the operator must still verify the remaining Cloudflare and Vercel isolation checks. It pushes Appwrite TablesDB and Storage definitions before deploying the Worker. Read-only deployments skip rebuilding the artifact scanner because the publish path is disabled and cannot invoke it. Any deployment whose registry mode is not `read_only`, or whose public-publish flag is enabled, must prove a safe active scanner before the Worker can deploy. A fresh build must activate and pass exact configuration, variable, deployment-identity, and signed-secret checks.
+The workflow renders a temporary Wrangler configuration from protected variables and rejects an Appwrite project-ID mismatch with the selected checked-in definition. Clerk's public security policy and pinned environment identity are checked automatically; the operator must still verify the remaining Cloudflare and Vercel isolation checks. It pushes Appwrite TablesDB and Storage definitions before deploying the Worker. A full deployment targeting read-only mode skips rebuilding the artifact scanner because the publish path is disabled; the dedicated scanner workflow remains available only while the live registry is read-only. Any deployment targeting writes must still observe the old live registry in exact read-only mode while it reconciles and proves the scanner, before the Worker cutover. A fresh build must activate and pass exact configuration, variable, deployment-identity, storage-key, and signed-secret checks.
 
-If Appwrite reports the exact terminal `Build produced no output artifact.` handoff failure, the workflow may instead retain the protected environment's pinned ready deployment after downloading its source and proving that the active ID, current function configuration, exact six-variable allowlist, ready deployment metadata, file set, every file digest, and hidden signing secret match the candidate. The normal fallback still requires `live=true`. A separate stale-marker exception requires `live=false`, exact reconciliation earlier in the same run, Appwrite `/health/version` exactly `1.9.5`, and one of two checked-in project/deployment attestations: staging `6a6181a0da2eaed03005` from [run 29975397469](https://github.com/DeepanSarkar03/Lemonize/actions/runs/29975397469), or production `6a61824d9976c050eeee` from [run 29975504229](https://github.com/DeepanSarkar03/Lemonize/actions/runs/29975504229). Both runs built commit `3060c6e03a90c697eae4898a5384f8071677bdb1`; the scanner package and runtime source are unchanged. The workflow re-reads function, deployment, and variables after source comparison and performs the signed side-effect-free execution last. It never patches `live` or reactivates the old deployment. A provider-version, status, identity, configuration, source, variable, challenge, or error-message mismatch remains blocking.
+If Appwrite reports the exact terminal `Build produced no output artifact.` handoff failure, the workflow has already enforced read-only mode, validated the storage key, reconciled the function, and unconditionally upserted the current secret key. Reconciliation marks the function stale, so there is no live-preflight shortcut. The only fallback requires `live=false`, Appwrite `/health/version` exactly `1.9.5`, exact seven-variable metadata, byte-identical downloaded source, ready deployment metadata, and one of two checked-in project/deployment attestations: staging `6a6181a0da2eaed03005` from [run 29975397469](https://github.com/DeepanSarkar03/Lemonize/actions/runs/29975397469), or production `6a61824d9976c050eeee` from [run 29975504229](https://github.com/DeepanSarkar03/Lemonize/actions/runs/29975504229). Both runs built commit `3060c6e03a90c697eae4898a5384f8071677bdb1`; the scanner package and runtime source are unchanged. The workflow re-reads function, deployment, and variables after source comparison and performs the signed side-effect-free execution last. It never patches `live` or reactivates the old deployment. A gate, attestation, canary, provider-version, status, identity, configuration, source, variable, challenge, or error-message mismatch remains blocking.
 
 The scanner is reconciled to:
 
 - Appwrite Node 25 runtime;
 - no public execute role;
 - `files.read` and `files.write` execution scopes only;
-- Appwrite's short-lived injected execution key, zero project-level variables, and an exact six-key function-variable allowlist; the HMAC value is secret and unexpected values such as `NODE_OPTIONS`, proxy settings, or legacy static Appwrite credentials are deleted;
+- zero project-level variables and an exact seven-key function-variable allowlist; temporary `APPWRITE_API_KEY` and the HMAC value are secret, and unexpected values such as `NODE_OPTIONS`, proxy settings, or unrelated Appwrite credentials are deleted;
 - a private antivirus-enabled quarantine bucket;
 - a locally built dependency-free `dist` created under the frozen pnpm lock, validated in Appwrite with `node --check` and no remote npm resolution;
 - a fresh deployment with bounded retention and a matching HMAC secret, or only the explicitly attested fallback path above.
+
+Appwrite 1.9.5 supplies its documented execution key in the `x-appwrite-key`
+header, but the pinned scanner artifact checks environment variables only. The
+static key is a temporary, unsupported integration shim while Appwrite's
+separate artifact-handoff outage blocks deploying the corrected scanner.
+Although runtime code and the storage canary pin the exact quarantine bucket,
+`files.read` and `files.write` still grant access to files project-wide. Once a
+corrected scanner consumes the header and Appwrite reliably hands off that
+artifact, remove the Appwrite key, protected secret, ID/attestation variables,
+secret `APPWRITE_API_KEY` function variable, and deployment shim together;
+restore the smaller variable allowlist and remove obsolete fallback attestations
+only in that reviewed transition.
 
 Before the first scanner deploy in each project, run `appwrite functions list-runtimes` and confirm `node-25` is available. The workflow fails closed if it is not; do not silently change runtimes or bypass the scanner.
 
@@ -128,11 +186,11 @@ Write enablement is a separate change with a separate approval. Complete the ste
 3. Take the final legacy database export and source R2 inventory only after the freeze. Record source resource IDs, timestamps, object counts, sizes, and digests.
 4. Import into production Appwrite TablesDB and the intended production R2 bucket. Reconcile users, real Clerk bindings, ownership, packages, versions, tags, counters, visibility, audit rows, object keys, sizes, and digests immediately before cutover.
 5. Explicitly classify migrated unscoped packages as read-only compatibility records. Verify non-admin dist-tag, deprecation, and soft-yank attempts are rejected. Do not rename packages silently or allow new versions. Administrator remediation requires an explicitly reviewed mutable-mode window or direct controlled provider operation.
-6. Verify the scanner's clean, rejection, retry, HMAC replay/expiry, quarantine, retained-clean-copy, and immutable-promotion paths in the production resource set without exposing a public publish route.
+6. While the live registry remains read-only, dispatch the dedicated protected scanner workflow for the approved SHA. Verify its exact environment/project/origin pins, storage-key canary, function reconciliation, fallback identity, and signed no-side-effect execution challenge. A real package publish is intentionally impossible in `read_only`; rely on the completed same-SHA staging fixture until the separately approved production write cutover below.
 7. Verify a completed Appwrite backup, a successful non-production restore, and separate R2 preservation evidence.
 8. Confirm rollback owners, commands, last-known-good versions, monitoring, and budget thresholds. Verify `MAX_GLOBAL_ARTIFACT_BYTES` is no more than 70% of the lower current R2/Appwrite entitlement, never more than 7 GiB, and remains at the conservative 1 GiB default if entitlement evidence is incomplete.
 9. Obtain narrow Cloudflare DNS/WAF authority, resolve and smoke-test `npm.lemonize.cyou`, verify its WAF rule IDs and Durable Object origin admission, and confirm the proxy can be disabled without affecting native registry reads.
 10. Authenticate an npm owner and confirm the npm organization/trusted-publisher relationship without adding a long-lived npm credential.
-11. Obtain explicit production write approval. Change `REGISTRY_MODE` to `public` and `ALLOW_PUBLIC_PUBLISH` to `true` in one reviewed protected-environment change, deploy, and immediately run namespace-scoped canary publishes for accounts with and without GitHub.
+11. Obtain explicit production write approval. Change `REGISTRY_MODE` to `public` and `ALLOW_PUBLIC_PUBLISH` to `true` in one reviewed protected-environment change and deploy from the still-read-only live registry. Immediately run a real namespace-scoped clean publish for the approved canary account and verify reservation, upload, scanner execution, quarantine, signed callback, retained clean copy, immutable promotion, metadata, and verified download; then test an account without GitHub. If any check fails, immediately restore `REGISTRY_MODE=read_only` and `ALLOW_PUBLIC_PUBLISH=false`, redeploy the same approved SHA, and verify `/v1/limits` before investigating.
 
 If any count, identity, digest, provider setting, or blocker is unresolved, keep the new registry read-only. A zero active-token count observed before the freeze is not proof of a freeze; enforcement must precede the final snapshot.
