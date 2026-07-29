@@ -372,11 +372,13 @@ function satisfies(version: string, range: string): boolean {
 function validatePeers(
   owner: string,
   peers: Record<string, string>,
-  available: Map<string, InstalledNode>,
+  available: Map<string, { version: string }>,
+  deferMissing = false,
 ): void {
   for (const [name, range] of Object.entries(peers).sort(([a], [b]) => a.localeCompare(b))) {
     const installed = available.get(name);
     if (!installed) {
+      if (deferMissing) continue;
       throw new Error(
         `${owner} requires peer ${name}@${range}, but it is not installed in an ancestor.`,
       );
@@ -522,7 +524,7 @@ async function installResolved(
     for (const [name, child] of childNodes) {
       if (!optionalNames.has(name)) continue;
       try {
-        validatePeers(`${child.name}@${child.version}`, child.peerDependencies, available);
+        validatePeers(`${child.name}@${child.version}`, child.peerDependencies, available, true);
       } catch (error) {
         delete dependencies[name];
         childNodes.delete(name);
@@ -540,7 +542,7 @@ async function installResolved(
     }
     for (const [name, child] of childNodes) {
       if (optionalNames.has(name)) continue;
-      validatePeers(`${child.name}@${child.version}`, child.peerDependencies, available);
+      validatePeers(`${child.name}@${child.version}`, child.peerDependencies, available, true);
     }
 
     state.lock.packages[key] = {
@@ -682,7 +684,7 @@ async function installLocked(
     const available = new Map(nextAncestors);
     for (const [name, child] of children) available.set(name, child);
     for (const child of children.values()) {
-      validatePeers(`${child.name}@${child.version}`, child.peerDependencies, available);
+      validatePeers(`${child.name}@${child.version}`, child.peerDependencies, available, true);
     }
     atomicReplace(staging, destination.packageDir, destination.nodeModulesDir);
     self.bins = createBinShims(destination.nodeModulesDir, destination.packageDir, bin);
@@ -711,6 +713,42 @@ function pruneUnreachablePackages(lock: LockfileV2): void {
   lock.packages = Object.fromEntries(
     Object.entries(lock.packages).filter(([key]) => reachable.has(key)),
   );
+}
+
+function validateGraphPeers(lock: LockfileV2, rootAvailable: Map<string, InstalledNode>): void {
+  const parents = new Map<string, Set<string>>();
+  for (const [parentKey, parent] of Object.entries(lock.packages)) {
+    for (const childKey of Object.values(parent.dependencies)) {
+      const values = parents.get(childKey) ?? new Set<string>();
+      values.add(parentKey);
+      parents.set(childKey, values);
+    }
+  }
+
+  for (const [key, entry] of Object.entries(lock.packages)) {
+    if (!entry.peerDependencies || Object.keys(entry.peerDependencies).length === 0) continue;
+    const available = new Map<string, { version: string }>(rootAvailable);
+    for (const childKey of Object.values(entry.dependencies)) {
+      const child = lock.packages[childKey];
+      if (child) available.set(child.name, child);
+    }
+    const queue = [...(parents.get(key) ?? [])];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const parentKey = queue.shift()!;
+      if (visited.has(parentKey)) continue;
+      visited.add(parentKey);
+      const parent = lock.packages[parentKey];
+      if (!parent) continue;
+      available.set(parent.name, parent);
+      for (const siblingKey of Object.values(parent.dependencies)) {
+        const sibling = lock.packages[siblingKey];
+        if (sibling) available.set(sibling.name, sibling);
+      }
+      queue.push(...(parents.get(parentKey) ?? []));
+    }
+    validatePeers(`${entry.name}@${entry.version}`, entry.peerDependencies, available);
+  }
 }
 
 export async function installRequests(
@@ -803,6 +841,7 @@ export async function installRequests(
     }
   }
   pruneUnreachablePackages(lock);
+  validateGraphPeers(lock, rootAvailable);
   return { lock, installed };
 }
 
