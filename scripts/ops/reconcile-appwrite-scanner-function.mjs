@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$/;
 const REQUEST_TIMEOUT_MS = 30_000;
 const RESPONSE_FORMAT = '1.9.5';
+const PINNED_APPWRITE_ENDPOINT = 'https://fra.cloud.appwrite.io/v1';
 
 function requireId(value, label) {
   if (typeof value !== 'string' || !ID_PATTERN.test(value)) {
@@ -75,6 +76,9 @@ export function buildScannerFunctionRequest({ command, endpoint, projectId, apiK
   }
 
   const baseUrl = base.href.replace(/\/+$/, '');
+  if (baseUrl !== PINNED_APPWRITE_ENDPOINT || endpoint.replace(/\/+$/, '') !== baseUrl) {
+    throw new Error('APPWRITE_ENDPOINT must match the pinned Lemonize Appwrite endpoint');
+  }
   let resource;
   if (command === 'create') {
     resource = `${baseUrl}/functions`;

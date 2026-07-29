@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -20,6 +20,10 @@ import {
   reconcileScannerFunction,
   scannerFunctionConfiguration,
 } from './reconcile-appwrite-scanner-function.mjs';
+import {
+  buildAppwriteDeploymentSourceRequest,
+  downloadAppwriteDeploymentSource,
+} from './download-appwrite-deployment-source.mjs';
 
 const functionId = 'artifact-scanner';
 const deploymentId = 'ready-deployment-1';
@@ -365,17 +369,26 @@ test('reconciles empty Appwrite arrays as JSON instead of bare CLI flags', async
 });
 
 test('Appwrite reconciliation validates destinations and redacts API errors', async () => {
-  assert.throws(
-    () =>
-      buildScannerFunctionRequest({
-        command: 'update',
-        endpoint: 'http://fra.cloud.appwrite.io/v1',
-        projectId: 'lemonize-staging-2026',
-        apiKey: 'secret-key',
-        functionId,
-      }),
-    /HTTPS URL/,
-  );
+  for (const endpoint of [
+    'http://fra.cloud.appwrite.io/v1',
+    'https://attacker.example/v1',
+    'https://127.0.0.1/v1',
+    'https://fra.cloud.appwrite.io:443/v1',
+    'https://fra.cloud.appwrite.io:8443/v1',
+    'https://fra.cloud.appwrite.io/v1/functions',
+  ]) {
+    assert.throws(
+      () =>
+        buildScannerFunctionRequest({
+          command: 'update',
+          endpoint,
+          projectId: 'lemonize-staging-2026',
+          apiKey: 'secret-key',
+          functionId,
+        }),
+      /HTTPS URL|pinned Lemonize Appwrite endpoint/,
+    );
+  }
   await assert.rejects(
     reconcileScannerFunction(
       {
@@ -641,4 +654,246 @@ test('proves the hidden signing secret through a side-effect-free active executi
       ),
     /did not prove/,
   );
+});
+
+const sourceDownloadOptions = (destination, overrides = {}) => ({
+  endpoint: 'https://fra.cloud.appwrite.io/v1/',
+  projectId: 'lemonize-staging-2026',
+  apiKey: 'scanner-deploy-secret-key',
+  functionId,
+  deploymentId: attestedStagingDeploymentId,
+  destination,
+  ...overrides,
+});
+
+async function sourceDownloadFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'lemonize-scanner-download-test-'));
+  return { root, destination: join(root, 'source.tar.gz') };
+}
+
+async function assertMissing(path) {
+  await assert.rejects(readFile(path), (error) => error?.code === 'ENOENT');
+}
+
+test('builds an exact authenticated Appwrite source download request', () => {
+  const request = buildAppwriteDeploymentSourceRequest(sourceDownloadOptions('unused'));
+  assert.equal(
+    request.url,
+    `https://fra.cloud.appwrite.io/v1/functions/${functionId}/deployments/${attestedStagingDeploymentId}/download?type=source`,
+  );
+  assert.equal(request.init.method, 'GET');
+  assert.equal(request.init.redirect, 'error');
+  assert.equal('body' in request.init, false);
+  assert.deepEqual(request.init.headers, {
+    accept: 'application/octet-stream',
+    'x-appwrite-project': 'lemonize-staging-2026',
+    'x-appwrite-key': 'scanner-deploy-secret-key',
+    'x-appwrite-response-format': '1.9.5',
+  });
+});
+
+test('rejects unsafe Appwrite source download destinations and identifiers', async () => {
+  const valid = sourceDownloadOptions('unused');
+  for (const endpoint of [
+    'http://fra.cloud.appwrite.io/v1',
+    'https://user@fra.cloud.appwrite.io/v1',
+    'https://fra.cloud.appwrite.io/v1?unsafe=true',
+    'https://attacker.example/v1',
+    'https://127.0.0.1/v1',
+    'https://fra.cloud.appwrite.io:443/v1',
+    'https://fra.cloud.appwrite.io:8443/v1',
+    'https://fra.cloud.appwrite.io/v1/functions',
+    'not a URL',
+  ]) {
+    assert.throws(
+      () => buildAppwriteDeploymentSourceRequest({ ...valid, endpoint }),
+      /valid URL|HTTPS URL|pinned Lemonize Appwrite endpoint/,
+    );
+  }
+  for (const drift of [
+    { projectId: '../project' },
+    { functionId: '../function' },
+    { deploymentId: '../deployment' },
+    { apiKey: '' },
+  ]) {
+    assert.throws(
+      () => buildAppwriteDeploymentSourceRequest({ ...valid, ...drift }),
+      /valid Appwrite ID|required/,
+    );
+  }
+  await assert.rejects(
+    downloadAppwriteDeploymentSource({ ...valid, destination: '' }),
+    /destination is required/,
+  );
+});
+
+test('downloads the authenticated Appwrite source without following redirects', async () => {
+  const files = await sourceDownloadFixture();
+  const expected = Buffer.from('exact scanner archive bytes');
+  try {
+    let captured;
+    const size = await downloadAppwriteDeploymentSource(
+      sourceDownloadOptions(files.destination),
+      async (url, init) => {
+        captured = { url, init };
+        return new Response(expected, {
+          status: 200,
+          headers: { 'content-length': String(expected.byteLength) },
+        });
+      },
+    );
+    assert.equal(size, expected.byteLength);
+    assert.deepEqual(await readFile(files.destination), expected);
+    assert.equal(captured.url.includes('scanner-deploy-secret-key'), false);
+    assert.equal(captured.init.redirect, 'error');
+    assert.equal(captured.init.headers['x-appwrite-key'], 'scanner-deploy-secret-key');
+    assert.equal(captured.init.signal.aborted, false);
+  } finally {
+    await rm(files.root, { recursive: true, force: true });
+  }
+});
+
+test('fails closed on Appwrite source redirects, status errors, and timeouts', async () => {
+  for (const scenario of ['redirect', 'status', 'timeout']) {
+    const files = await sourceDownloadFixture();
+    try {
+      let request;
+      const fetchImpl = async (_url, init) => {
+        request = init;
+        if (scenario === 'redirect') throw new TypeError('redirect rejected');
+        if (scenario === 'status') {
+          return new Response('scanner-deploy-secret-key must not be reported', { status: 401 });
+        }
+        return await new Promise((resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
+        });
+      };
+      const operation = downloadAppwriteDeploymentSource(
+        sourceDownloadOptions(files.destination, {
+          ...(scenario === 'timeout' ? { timeoutMs: 5 } : {}),
+        }),
+        fetchImpl,
+      );
+      await assert.rejects(operation, (error) => {
+        if (scenario === 'redirect') assert.match(error.message, /failed before a response/);
+        if (scenario === 'status') {
+          assert.match(error.message, /HTTP 401/);
+          assert.doesNotMatch(error.message, /scanner-deploy-secret-key/);
+        }
+        if (scenario === 'timeout') assert.match(error.message, /timed out/);
+        return true;
+      });
+      assert.equal(request.redirect, 'error');
+      await assertMissing(files.destination);
+    } finally {
+      await rm(files.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('rejects empty, oversized, and partial Appwrite source bodies without a file', async () => {
+  const scenarios = [
+    {
+      name: 'empty',
+      response: () => new Response(null, { status: 200 }),
+      pattern: /response was empty/,
+    },
+    {
+      name: 'declared oversized',
+      response: () => new Response('12345', { status: 200, headers: { 'content-length': '5' } }),
+      pattern: /invalid size/,
+    },
+    {
+      name: 'streamed oversized',
+      response: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(Uint8Array.from([1, 2, 3]));
+              controller.enqueue(Uint8Array.from([4, 5, 6]));
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        ),
+      pattern: /exceeds the download limit/,
+    },
+    {
+      name: 'partial',
+      response: () => ({
+        status: 200,
+        headers: new Headers(),
+        body: {
+          getReader() {
+            let reads = 0;
+            return {
+              async read() {
+                reads += 1;
+                if (reads === 1) return { done: false, value: Uint8Array.from([1, 2]) };
+                throw new Error('connection reset');
+              },
+              async cancel() {},
+            };
+          },
+        },
+      }),
+      pattern: /ended before completion/,
+    },
+    {
+      name: 'shorter than content length',
+      response: () =>
+        new Response(Uint8Array.from([1, 2]), {
+          status: 200,
+          headers: { 'content-length': '4' },
+        }),
+      pattern: /ended before its declared size/,
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const files = await sourceDownloadFixture();
+    try {
+      await assert.rejects(
+        downloadAppwriteDeploymentSource(
+          sourceDownloadOptions(files.destination, { maxBytes: 4 }),
+          async () => scenario.response(),
+        ),
+        scenario.pattern,
+        scenario.name,
+      );
+      await assertMissing(files.destination);
+    } finally {
+      await rm(files.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('never overwrites an existing scanner source archive', async () => {
+  const files = await sourceDownloadFixture();
+  const original = Buffer.from('trusted existing file');
+  try {
+    await writeFile(files.destination, original);
+    await assert.rejects(
+      downloadAppwriteDeploymentSource(
+        sourceDownloadOptions(files.destination),
+        async () => new Response('replacement', { status: 200 }),
+      ),
+      (error) => error?.code === 'EEXIST',
+    );
+    assert.deepEqual(await readFile(files.destination), original);
+  } finally {
+    await rm(files.root, { recursive: true, force: true });
+  }
+});
+
+test('wires scanner fallback to the authenticated downloader instead of the CLI URL', async () => {
+  const script = await readFile(new URL('./deploy-appwrite-scanner.sh', import.meta.url), 'utf8');
+  const endpointGate = script.indexOf(
+    "readonly PINNED_APPWRITE_ENDPOINT='https://fra.cloud.appwrite.io/v1'",
+  );
+  const firstKeyBearingCliCommand = script.indexOf('"$APPWRITE_BIN" client');
+  assert.notEqual(endpointGate, -1);
+  assert.ok(endpointGate < firstKeyBearingCliCommand);
+  assert.match(script, /download-appwrite-deployment-source\.mjs/);
+  assert.doesNotMatch(script, /functions get-deployment-download/);
 });

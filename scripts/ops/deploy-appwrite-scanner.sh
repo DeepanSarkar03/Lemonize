@@ -8,6 +8,15 @@ bash "$script_dir/require-env.sh" \
   APPWRITE_SCANNER_FUNCTION_ID APPWRITE_QUARANTINE_BUCKET_ID \
   REGISTRY_BASE_URL SCANNER_SHARED_SECRET MAX_TARBALL_SIZE_BYTES MAX_PACKAGE_FILES
 
+# This workflow sends the deploy API key through both the pinned CLI and the
+# exact REST helpers below. Fail before the first key-bearing command if the
+# protected environment is ever pointed at a different origin, port, or path.
+readonly PINNED_APPWRITE_ENDPOINT='https://fra.cloud.appwrite.io/v1'
+if [[ "$APPWRITE_ENDPOINT" != "$PINNED_APPWRITE_ENDPOINT" ]]; then
+  echo "APPWRITE_ENDPOINT must match the pinned Lemonize Appwrite endpoint" >&2
+  exit 1
+fi
+
 APPWRITE_BIN=${APPWRITE_BIN:-appwrite}
 cleanup_paths=()
 cleanup() {
@@ -315,11 +324,11 @@ try_identical_active_fallback() {
     --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
     --deployment-id "$fallback_id" > "$fallback_deployment_file" || return 1
   verify_exact_variables fallback-initial || return 1
-  "$APPWRITE_BIN" functions get-deployment-download \
-    --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
-    --deployment-id "$fallback_id" \
-    --type source \
-    --destination "$source_archive" >/dev/null || return 1
+  # appwrite-cli 22.6.1 constructs an unauthenticated browser download URL for
+  # this endpoint. Use the bounded server-side downloader so the protected API
+  # key is sent in a header and redirects cannot shed the authentication gate.
+  node "$script_dir/download-appwrite-deployment-source.mjs" \
+    "$fallback_id" "$source_archive" || return 1
   test -s "$source_archive" || return 1
 
   if [[ "$fallback_mode" == live ]]; then
