@@ -631,6 +631,7 @@ test('proves the hidden signing secret through a side-effect-free active executi
   );
 
   const execution = {
+    functionId,
     status: 'completed',
     deploymentId,
     requestMethod: 'POST',
@@ -638,10 +639,11 @@ test('proves the hidden signing secret through a side-effect-free active executi
     responseStatusCode: 400,
     responseBody: JSON.stringify({ ok: false, error: { code: 'invalid_job' } }),
   };
-  assert.equal(verifyScannerChallenge(execution, deploymentId), deploymentId);
+  assert.equal(verifyScannerChallenge(execution, deploymentId, functionId), deploymentId);
   assert.throws(
-    () => verifyScannerChallenge({ ...execution, responseStatusCode: 401 }, deploymentId),
-    /did not prove/,
+    () =>
+      verifyScannerChallenge({ ...execution, responseStatusCode: 401 }, deploymentId, functionId),
+    /mismatched fields: responseStatusCode/,
   );
   assert.throws(
     () =>
@@ -651,8 +653,9 @@ test('proves the hidden signing secret through a side-effect-free active executi
           responseBody: JSON.stringify({ ok: false, error: { code: 'invalid_signature' } }),
         },
         deploymentId,
+        functionId,
       ),
-    /did not prove/,
+    /mismatched fields: responseBody/,
   );
 });
 
@@ -896,4 +899,10 @@ test('wires scanner fallback to the authenticated downloader instead of the CLI 
   assert.ok(endpointGate < firstKeyBearingCliCommand);
   assert.match(script, /download-appwrite-deployment-source\.mjs/);
   assert.doesNotMatch(script, /functions get-deployment-download/);
+  assert.match(
+    script,
+    /verify_active_secret\(\)[\s\S]*execute-appwrite-scanner-challenge\.mjs" \\\r?\n\s+"\$expected_deployment_id"/,
+  );
+  assert.doesNotMatch(script, /functions create-execution/);
+  assert.doesNotMatch(script, /--challenge-(?:headers|result)/);
 });
