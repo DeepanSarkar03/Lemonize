@@ -5,8 +5,28 @@ umask 077
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 bash "$script_dir/require-env.sh" \
   APPWRITE_ENDPOINT APPWRITE_PROJECT_ID APPWRITE_DEPLOY_API_KEY \
-  APPWRITE_SCANNER_FUNCTION_ID APPWRITE_QUARANTINE_BUCKET_ID \
+  APPWRITE_SCANNER_API_KEY APPWRITE_SCANNER_API_KEY_ID \
+  APPWRITE_SCANNER_API_KEY_ATTESTATION_JSON APPWRITE_SCANNER_FUNCTION_ID \
+  APPWRITE_QUARANTINE_BUCKET_ID DEPLOY_ENV \
   REGISTRY_BASE_URL SCANNER_SHARED_SECRET MAX_TARBALL_SIZE_BYTES MAX_PACKAGE_FILES
+
+# Keep every credential out of the local build and syntax check. The deploy and
+# HMAC credentials are restored only after those steps; the temporary scanner
+# key is passed selectively to its canary, variable write, and log redactor.
+readonly deploy_api_key=$APPWRITE_DEPLOY_API_KEY
+readonly scanner_api_key=$APPWRITE_SCANNER_API_KEY
+readonly scanner_shared_secret=$SCANNER_SHARED_SECRET
+unset APPWRITE_DEPLOY_API_KEY APPWRITE_SCANNER_API_KEY SCANNER_SHARED_SECRET
+if [[ "$scanner_api_key" == "$deploy_api_key" ||
+    "$scanner_api_key" == "$scanner_shared_secret" ||
+    "$deploy_api_key" == "$scanner_shared_secret" ]]; then
+  echo "Scanner deployment credentials must be distinct" >&2
+  exit 1
+fi
+
+# Bind the selected environment to both its checked Appwrite project and exact
+# registry origin before querying a write gate or making any provider mutation.
+node "$script_dir/verify-appwrite-config.mjs" "$DEPLOY_ENV" >/dev/null
 
 # This workflow sends the deploy API key through both the pinned CLI and the
 # exact REST helpers below. Fail before the first key-bearing command if the
@@ -44,6 +64,10 @@ cp apps/artifact-scanner/package.json "$deploy_dir/package.json"
 cp -R apps/artifact-scanner/dist/. "$deploy_dir/dist/"
 test -s "$deploy_dir/dist/main.js"
 node --check "$deploy_dir/dist/main.js"
+
+# The remaining provider reconciliation path may now inherit these two secrets.
+export APPWRITE_DEPLOY_API_KEY=$deploy_api_key
+export SCANNER_SHARED_SECRET=$scanner_shared_secret
 
 "$APPWRITE_BIN" client \
   --endpoint "$APPWRITE_ENDPOINT" \
@@ -130,26 +154,21 @@ verify_live_registry_write_gate() {
   write_gate_verified=true
 }
 
-# Appwrite marks a function stale even after a no-op variable update. Preserve
-# fallback eligibility only when the pinned active deployment is already live,
-# its visible configuration is exact, and a signed no-side-effect execution
-# proves that the hidden HMAC secret matches this protected environment.
-fallback_eligible=false
+# Static-key validation and every scanner mutation require the live registry to
+# be fully read-only. This prevents an in-flight publish from racing key
+# rotation or function-variable reconciliation.
+if ! verify_live_registry_write_gate; then
+  echo "Scanner deployment requires the live registry write gate" >&2
+  exit 1
+fi
+APPWRITE_SCANNER_API_KEY="$scanner_api_key" \
+  node "$script_dir/verify-appwrite-scanner-storage-key.mjs" >/dev/null
+
+# Every deployment reconciles all mutable function state and writes the current
+# protected scanner key. A previously live fallback must never bypass key
+# rotation simply because its earlier configuration still verifies.
 stale_fallback_candidate=false
 fallback_id=${APPWRITE_SCANNER_FALLBACK_DEPLOYMENT_ID:-}
-if [[ "$function_command" == update && -n "$fallback_id" ]]; then
-  preflight_function_file="$HOME/fallback-preflight-function.json"
-  if read_scanner_function "$preflight_function_file" &&
-    node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
-      --function-only "$preflight_function_file" "$fallback_id" \
-      "$APPWRITE_SCANNER_FUNCTION_ID" >/dev/null &&
-    verify_exact_variables fallback-preflight &&
-    verify_active_secret "$fallback_id"; then
-    fallback_eligible=true
-  fi
-fi
-
-if [[ "$fallback_eligible" != true ]]; then
 reconcile_response_file="$HOME/reconcile-response.json"
 reconciled_function_file="$HOME/reconciled-function.json"
 # Commander represents a bare optional variadic flag as boolean true, so the
@@ -166,10 +185,13 @@ node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
 variables_file="$HOME/variables.json"
 read_scanner_variables "$variables_file"
 
-# The function uses Appwrite's short-lived execution key. Treat these six
-# custom values as an exact allowlist: inherited values such as NODE_OPTIONS,
-# proxy settings, or legacy static credentials could otherwise change the
-# behavior of byte-identical source.
+# Appwrite 1.9.5 supplies the documented execution key in the x-appwrite-key
+# request header, but the pinned scanner artifact checks only environment
+# variables. APPWRITE_API_KEY is a temporary compatibility shim using a
+# dedicated files.read/files.write key. Keep it secret and treat these seven
+# values as an exact allowlist. Inherited values such as NODE_OPTIONS, proxy
+# settings, or any other static credentials could change byte-identical source
+# behavior.
 while IFS= read -r unexpected_variable_id; do
   [[ -z "$unexpected_variable_id" ]] && continue
   "$APPWRITE_BIN" --json functions delete-variable \
@@ -181,6 +203,7 @@ done < <(node -e '
   const allowed = new Set([
     "REGISTRY_INTERNAL_URL",
     "SCAN_SIGNING_SECRET",
+    "APPWRITE_API_KEY",
     "APPWRITE_QUARANTINE_BUCKET_ID",
     "MAX_ARCHIVE_BYTES",
     "MAX_PACKAGE_FILES",
@@ -262,6 +285,7 @@ upsert_variable() {
 
 upsert_variable registry_internal_url REGISTRY_INTERNAL_URL "$REGISTRY_BASE_URL" false
 upsert_variable scan_signing_secret SCAN_SIGNING_SECRET "$SCANNER_SHARED_SECRET" true
+upsert_variable appwrite_api_key APPWRITE_API_KEY "$scanner_api_key" true
 upsert_variable quarantine_bucket APPWRITE_QUARANTINE_BUCKET_ID "$APPWRITE_QUARANTINE_BUCKET_ID" false
 upsert_variable max_archive_bytes MAX_ARCHIVE_BYTES "$MAX_TARBALL_SIZE_BYTES" false
 upsert_variable max_package_files MAX_PACKAGE_FILES "$MAX_PACKAGE_FILES" false
@@ -275,30 +299,18 @@ if [[ "$function_command" == update && -n "$fallback_id" ]]; then
   # signed execution only after the exact artifact-handoff failure occurs.
   stale_fallback_candidate=true
 fi
-else
-  echo "Pinned active scanner passed immutable configuration and secret preflight"
-fi
 
 try_identical_active_fallback() {
   local failed_status_file=$1
   local fallback_id=${APPWRITE_SCANNER_FALLBACK_DEPLOYMENT_ID:-}
-  local fallback_mode
   [[ -n "$fallback_id" ]] || return 1
-  if [[ "$fallback_eligible" == true ]]; then
-    fallback_mode=live
-  elif [[ "$stale_fallback_candidate" == true ]]; then
-    fallback_mode=attested-stale
-  else
-    return 1
-  fi
+  [[ "$stale_fallback_candidate" == true ]] || return 1
 
   # This exception is intentionally narrower than a generic failed build. It
   # covers Appwrite's post-build artifact handoff failure and nothing else.
   node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
     --build-log "$failed_status_file" || return 1
-  if [[ "$fallback_mode" == attested-stale ]]; then
-    verify_attested_appwrite_version fallback-initial || return 1
-  fi
+  verify_attested_appwrite_version fallback-initial || return 1
 
   local fallback_dir function_file final_function_file fallback_deployment_file
   local final_fallback_deployment_file
@@ -323,16 +335,10 @@ try_identical_active_fallback() {
     "$fallback_id" "$source_archive" || return 1
   test -s "$source_archive" || return 1
 
-  if [[ "$fallback_mode" == live ]]; then
-    verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
-      "$function_file" "$fallback_deployment_file" "$fallback_id" \
-      "$APPWRITE_SCANNER_FUNCTION_ID" "$deploy_dir" "$source_archive") || return 1
-  else
-    verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
-      --attested-stale-fallback "$function_file" "$fallback_deployment_file" \
-      "$fallback_id" "$APPWRITE_SCANNER_FUNCTION_ID" "$deploy_dir" \
-      "$source_archive" "$APPWRITE_PROJECT_ID") || return 1
-  fi
+  verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
+    --attested-stale-fallback "$function_file" "$fallback_deployment_file" \
+    "$fallback_id" "$APPWRITE_SCANNER_FUNCTION_ID" "$deploy_dir" \
+    "$source_archive" "$APPWRITE_PROJECT_ID") || return 1
   [[ "$verified_id" == "$fallback_id" ]] || return 1
 
   # Re-read every mutable or status-bearing input after the source comparison.
@@ -343,21 +349,15 @@ try_identical_active_fallback() {
   "$APPWRITE_BIN" --json functions get-deployment \
     --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
     --deployment-id "$fallback_id" > "$final_fallback_deployment_file" || return 1
-  if [[ "$fallback_mode" == live ]]; then
-    final_verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
-      "$final_function_file" "$final_fallback_deployment_file" "$fallback_id" \
-      "$APPWRITE_SCANNER_FUNCTION_ID" "$deploy_dir" "$source_archive") || return 1
-  else
-    verify_attested_appwrite_version fallback-final || return 1
-    final_verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
-      --attested-stale-fallback "$final_function_file" \
-      "$final_fallback_deployment_file" "$fallback_id" \
-      "$APPWRITE_SCANNER_FUNCTION_ID" "$deploy_dir" "$source_archive" \
-      "$APPWRITE_PROJECT_ID") || return 1
-  fi
+  verify_attested_appwrite_version fallback-final || return 1
+  final_verified_id=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
+    --attested-stale-fallback "$final_function_file" \
+    "$final_fallback_deployment_file" "$fallback_id" \
+    "$APPWRITE_SCANNER_FUNCTION_ID" "$deploy_dir" "$source_archive" \
+    "$APPWRITE_PROJECT_ID") || return 1
   [[ "$final_verified_id" == "$fallback_id" ]] || return 1
   verify_active_secret "$fallback_id" || return 1
-  echo "Appwrite artifact handoff failed; retained $fallback_mode byte-identical active scanner $verified_id"
+  echo "Appwrite artifact handoff failed; retained attested-stale byte-identical active scanner $verified_id"
   return 0
 }
 
@@ -426,12 +426,16 @@ for build_attempt in $(seq 1 "$max_build_attempts"); do
           echo "Appwrite artifact handoff failed; retrying exact scanner build ($build_attempt/$max_build_attempts)" >&2
           continue 2
         fi
-        node - "$status_file" <<'NODE' >&2
+        APPWRITE_SCANNER_API_KEY="$scanner_api_key" node - "$status_file" <<'NODE' >&2
 const fs = require('node:fs');
 const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 let logs = typeof data.buildLogs === 'string' ? data.buildLogs : '';
 logs = logs.replace(/\u001b\[[0-9;]*m/g, '');
-for (const name of ['APPWRITE_DEPLOY_API_KEY', 'SCANNER_SHARED_SECRET']) {
+for (const name of [
+  'APPWRITE_DEPLOY_API_KEY',
+  'APPWRITE_SCANNER_API_KEY',
+  'SCANNER_SHARED_SECRET',
+]) {
   const secret = process.env[name];
   if (secret) logs = logs.split(secret).join('[REDACTED]');
 }

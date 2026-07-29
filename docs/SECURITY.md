@@ -77,9 +77,38 @@ Provider credentials are split by responsibility and environment:
 
 - `APPWRITE_DEPLOY_API_KEY`: protected CI only; schema and function administration.
 - `APPWRITE_RUNTIME_API_KEY`: injected into the Worker as `APPWRITE_API_KEY`; only required row reads/writes, scanner execution creation, rejected/expired quarantine cleanup, and expired device-token cleanup from its Durable Object.
+- `APPWRITE_SCANNER_API_KEY`: temporary protected scanner-deployment secret; a distinct per-environment Appwrite key with only `files.read` and `files.write`, stored in the function as secret `APPWRITE_API_KEY`.
 - `APPWRITE_RESTORE_DATA_API_KEY`: staging restore-drill CI only; `rows.read` and `rows.write`, with the drill script pinning every operation to generated synthetic resource IDs.
 - `APPWRITE_BACKUP_API_KEY`: backup policy, archive, and restoration operations only.
-- the scanner uses Appwrite's execution-scoped injected key with only `files.read` and `files.write`; it does not store a long-lived Appwrite key.
+
+Appwrite 1.9.5 supplies the documented execution-scoped key in the
+`x-appwrite-key` header. The pinned scanner artifact has an integration bug that
+checks only environment variables; a separate Appwrite artifact-handoff outage
+blocks deploying the corrected build. `APPWRITE_SCANNER_API_KEY` is a temporary,
+unsupported compatibility shim passed only to the scanner deployment step. It
+must never reuse `APPWRITE_RUNTIME_API_KEY`, `APPWRITE_DEPLOY_API_KEY`, or
+`SCANNER_SHARED_SECRET`. Deployment fails closed unless the live registry is
+exactly read-only and the scanner has zero project variables and exactly seven
+function variables, with both `APPWRITE_API_KEY` and `SCAN_SIGNING_SECRET`
+marked secret.
+
+Appwrite key secrets are opaque and cannot self-introspect their ID or granted
+scopes. CI validates the protected key ID and attestation record, then proves
+functional create/read/delete access in the exact quarantine bucket, but it
+cannot cryptographically bind the secret to the recorded ID or prove that no
+additional scope exists. A reviewer must retain provider-console evidence that
+the identified, environment-unique key has exactly `files.read` and
+`files.write`, a provider expiry no more than 90 days after creation, and no
+extra scope. Those grants apply to files project-wide: the bucket pin, storage
+canary, and signed execution challenge constrain intended behavior, not the
+credential's provider-side blast radius. Treat compromise as potential
+read/write access to every file in the matching Appwrite project allowed by
+those scopes, and enforce provider expiry and revocation after replacement.
+
+After the corrected scanner artifact consumes `x-appwrite-key` and Appwrite
+reliably hands off that artifact, remove the scanner API key, protected GitHub
+secret, key-ID and attestation variables, secret `APPWRITE_API_KEY` function
+variable, and deployment shim as one reviewed change.
 
 Dedicated dev, staging, and production Appwrite projects and keys are the required target. The checked-in default dev Worker configuration currently points at staging Appwrite and Clerk metadata, so local integration must override both before making writes. Protected staging/production deploys reject an Appwrite project ID that does not match the selected checked-in definition; operators must verify the remaining cross-provider isolation.
 
