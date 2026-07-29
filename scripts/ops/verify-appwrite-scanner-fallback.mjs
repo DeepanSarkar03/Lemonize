@@ -272,24 +272,44 @@ export function scannerChallengeHeaders(secret, now = new Date()) {
   };
 }
 
-export function verifyScannerChallenge(executionPayload, expectedDeploymentId) {
+export function verifyScannerChallenge(executionPayload, expectedDeploymentId, expectedFunctionId) {
   const execution = requireObject(executionPayload, 'Scanner challenge execution');
+  const mismatches = [];
+  if (!ID_PATTERN.test(expectedDeploymentId)) mismatches.push('expectedDeploymentId');
+  if (expectedFunctionId !== undefined) {
+    if (!ID_PATTERN.test(expectedFunctionId)) mismatches.push('expectedFunctionId');
+    if (execution.functionId !== expectedFunctionId) mismatches.push('functionId');
+  }
+  if (execution.status !== 'completed') mismatches.push('status');
+  if (execution.deploymentId !== expectedDeploymentId) mismatches.push('deploymentId');
+  if (execution.requestMethod !== 'POST') mismatches.push('requestMethod');
+  if (execution.requestPath !== CHALLENGE_PATH) mismatches.push('requestPath');
+  if (execution.responseStatusCode !== 400) mismatches.push('responseStatusCode');
+
   let responseBody;
   try {
     responseBody = JSON.parse(execution.responseBody);
   } catch {
-    throw new Error('Scanner challenge returned malformed JSON');
+    mismatches.push('responseBody');
   }
   if (
-    !ID_PATTERN.test(expectedDeploymentId) ||
-    execution.status !== 'completed' ||
-    execution.deploymentId !== expectedDeploymentId ||
-    execution.requestMethod !== 'POST' ||
-    execution.requestPath !== CHALLENGE_PATH ||
-    execution.responseStatusCode !== 400 ||
-    JSON.stringify(responseBody) !== JSON.stringify({ ok: false, error: { code: 'invalid_job' } })
+    !responseBody ||
+    typeof responseBody !== 'object' ||
+    Array.isArray(responseBody) ||
+    responseBody.ok !== false ||
+    !responseBody.error ||
+    typeof responseBody.error !== 'object' ||
+    Array.isArray(responseBody.error) ||
+    responseBody.error.code !== 'invalid_job' ||
+    Object.keys(responseBody).sort().join(',') !== 'error,ok' ||
+    Object.keys(responseBody.error).join(',') !== 'code'
   ) {
-    throw new Error('Scanner secret challenge did not prove the active deployment');
+    mismatches.push('responseBody');
+  }
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Scanner secret challenge mismatched fields: ${[...new Set(mismatches)].join(', ')}`,
+    );
   }
   return expectedDeploymentId;
 }

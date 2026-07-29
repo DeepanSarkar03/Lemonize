@@ -79,19 +79,11 @@ verify_exact_variables() {
 
 verify_active_secret() {
   local expected_deployment_id=$1
-  local challenge_headers challenge_file
-  challenge_file="$HOME/scanner-secret-challenge.json"
-  challenge_headers=$(node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
-    --challenge-headers) || return 1
-  "$APPWRITE_BIN" --json functions create-execution \
-    --function-id "$APPWRITE_SCANNER_FUNCTION_ID" \
-    --body '{}' \
-    --async false \
-    --path '/__lemonize_secret_challenge' \
-    --method POST \
-    --headers "$challenge_headers" > "$challenge_file" || return 1
-  node "$script_dir/verify-appwrite-scanner-fallback.mjs" \
-    --challenge-result "$challenge_file" "$expected_deployment_id" >/dev/null || return 1
+  # appwrite-cli 22.6.1 hard-pins response format 1.8.1, whose compatibility
+  # filter renames the modern execution fields used by the strict verifier.
+  # The bounded helper pins the same trusted endpoint to response format 1.9.5.
+  node "$script_dir/execute-appwrite-scanner-challenge.mjs" \
+    "$expected_deployment_id" >/dev/null || return 1
 }
 
 # The pinned CLI response schema omits build/runtime specification fields.
