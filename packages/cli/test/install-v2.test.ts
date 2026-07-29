@@ -243,4 +243,63 @@ describe('recursive lockfile-v2 installer', () => {
     ).rejects.toThrow(/Integrity check failed/);
     expect(readFileSync(join(existing, 'sentinel.txt'), 'utf8')).toBe('keep me');
   });
+
+  it('defers nested peer validation until all root dependencies are installed', async () => {
+    const consumer = await packed({
+      name: 'consumer',
+      version: '1.0.0',
+      dependencies: { reconciler: '1.0.0' },
+    });
+    const reconciler = await packed({
+      name: 'reconciler',
+      version: '1.0.0',
+      peerDependencies: { react: '^19.0.0' },
+    });
+    const react = await packed({ name: 'react', version: '19.2.0' });
+    const archives = { consumer, reconciler, react };
+
+    globalThis.fetch = vi.fn(async (input: Request | string | URL) => {
+      const url = new URL(input.toString());
+      const tarballMatch = url.pathname.match(/^\/([^/]+)\/-\/[^/]+\.tgz$/);
+      if (tarballMatch) {
+        const archive = archives[tarballMatch[1] as keyof typeof archives];
+        return archive ? new Response(archive.tarball) : new Response('not found', { status: 404 });
+      }
+      const name = url.pathname.slice(1) as keyof typeof archives;
+      const archive = archives[name];
+      if (!archive) return new Response('not found', { status: 404 });
+      const version = archive.manifest.version;
+      return new Response(
+        JSON.stringify({
+          name,
+          'dist-tags': { latest: version },
+          versions: {
+            [version]: {
+              name,
+              version,
+              dist: {
+                tarball: `${NPM}/${name}/-/${name}-${version}.tgz`,
+                integrity: archive.integrity,
+              },
+            },
+          },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    const cwd = tmp();
+    const ctx = {
+      registry: REGISTRY,
+      token: null,
+      client: new LemonizeClient({ registry: REGISTRY }),
+    };
+    const result = await installRequests(ctx, cwd, [
+      { source: 'npm', name: 'consumer', spec: '1.0.0', kind: 'dependencies' },
+      { source: 'npm', name: 'react', spec: '19.2.0', kind: 'dependencies' },
+    ]);
+
+    expect(result.installed.map(({ name }) => name)).toEqual(['consumer', 'react']);
+    expect(existsSync(join(cwd, 'node_modules', 'consumer', 'package.json'))).toBe(true);
+    expect(existsSync(join(cwd, 'node_modules', 'react', 'package.json'))).toBe(true);
+  });
 });

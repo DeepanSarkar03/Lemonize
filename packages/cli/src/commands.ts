@@ -183,7 +183,9 @@ export async function cmdTokenCreate(
   const allowed = new Set<TokenScope>(['read', 'publish', 'manage:packages']);
   const scopes = (opts.scopes ?? ['read', 'publish', 'manage:packages']) as TokenScope[];
   if (scopes.length === 0 || scopes.some((scope) => !allowed.has(scope))) {
-    throw new Error('Invalid token scope. CLI-created tokens may use read, publish, or manage:packages.');
+    throw new Error(
+      'Invalid token scope. CLI-created tokens may use read, publish, or manage:packages.',
+    );
   }
   const expiresInDays = opts.expiresInDays ?? 30;
   if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 90) {
@@ -688,6 +690,23 @@ export async function cmdExec(pkgSpec: string, passthrough: string[], opts: Glob
     }
     mkdirSync(stageDir, { recursive: true });
     await extractTarball(data, stageDir, { stripPackagePrefix: true });
+  }
+
+  // `lemx` executes from an isolated cache, so the package's production
+  // dependencies must be installed there before its bin can be launched.
+  // Write the marker only after a complete install so an interrupted or
+  // failed attempt is repaired automatically on the next invocation.
+  const readyMarker = join(stageDir, '.lemonize-exec-ready');
+  const isReady =
+    existsSync(readyMarker) && readFileSync(readyMarker, 'utf8').trim() === v.integrity;
+  if (!isReady) {
+    const requests = projectRequests(readProjectPkg(stageDir), false);
+    if (requests.length > 0) {
+      log.step(`Installing dependencies for ${name}@${version}`);
+      const result = await installRequests(ctx, stageDir, requests);
+      writeLockfile(stageDir, result.lock);
+    }
+    writeFileSync(readyMarker, `${v.integrity}\n`);
   }
 
   const unscoped = name.replace(/^@[^/]+\//, '');
