@@ -54,6 +54,6 @@
     "postject": "1.0.0-alpha.6",
     "tsup": "^8.3.0",
     "typescript": "^5.6.2",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }
